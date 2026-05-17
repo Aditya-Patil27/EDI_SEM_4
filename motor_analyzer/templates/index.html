@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MotorSense — Vibration Analysis System</title>
+  <meta name="description" content="Real-time motor frequency analysis and anomaly detection using ESP32 + ADXL345 accelerometer with ML-powered insights." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+<header class="header">
+  <div class="header-brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="brand-name">MotorSense</h1>
+      <p class="brand-sub">Vibration Analysis System</p>
+    </div>
+  </div>
+
+  <div class="header-status">
+    <div class="status-pill" id="conn-pill">
+      <span class="status-dot" id="conn-dot"></span>
+      <span id="conn-text">Disconnected</span>
+    </div>
+    <div class="status-pill" id="model-pill" style="display:none;">
+      <span class="status-dot green"></span>
+      <span id="model-pill-text">No model</span>
+    </div>
+  </div>
+
+  <button class="btn btn-ghost" id="settings-toggle-btn" title="Connection Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+    Settings
+  </button>
+</header>
+
+<!-- ═════════════════════ CONNECTION DRAWER ═══════════════════════ -->
+<div class="drawer" id="settings-drawer">
+  <div class="drawer-inner">
+    <h3 class="drawer-title">Connection Settings</h3>
+    <div class="form-row">
+      <label class="form-label">Serial Port</label>
+      <div class="input-row">
+        <select id="port-select" class="form-select">
+          <option value="">Scanning…</option>
+        </select>
+        <button class="btn btn-ghost icon-btn" id="refresh-ports-btn" title="Refresh ports">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">Baud Rate</label>
+      <select id="baud-select" class="form-select">
+        <option value="9600">9600</option>
+        <option value="57600">57600</option>
+        <option value="115200" selected>115200</option>
+        <option value="230400">230400</option>
+      </select>
+    </div>
+    <div class="drawer-actions">
+      <button class="btn btn-primary" id="connect-btn">Connect</button>
+      <button class="btn btn-danger" id="disconnect-btn" disabled>Disconnect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ STATUS BAR ════════════════════════════ -->
+<div class="status-bar" id="status-bar">
+  <div class="status-bar-inner">
+    <span class="status-icon" id="status-icon">●</span>
+    <span id="status-text">IDLE — Connect a serial port to begin</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════ MAIN LAYOUT ═══════════════════════════ -->
+<main class="main-grid">
+
+  <!-- ── Left Panel ── -->
+  <aside class="left-panel">
+
+    <!-- Metric Cards -->
+    <div class="metrics-row">
+      <div class="metric-card" id="freq-card">
+        <div class="metric-label">Dominant Freq</div>
+        <div class="metric-value" id="dom-freq">—</div>
+        <div class="metric-unit">Hz</div>
+      </div>
+      <div class="metric-card" id="anomaly-score-card">
+        <div class="metric-label">Anomaly Score</div>
+        <div class="metric-value" id="anomaly-score-val">—</div>
+        <div class="metric-unit">%</div>
+      </div>
+    </div>
+
+    <!-- Anomaly Alert -->
+    <div class="alert-box" id="anomaly-alert" style="display:none;">
+      <div class="alert-icon">⚠</div>
+      <div>
+        <div class="alert-title">ANOMALY DETECTED</div>
+        <div class="alert-sub">Motor behaviour deviates from trained profile</div>
+      </div>
+    </div>
+
+    <!-- ─── TRAIN SECTION ─── -->
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Train New Model
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Model Name</label>
+        <input type="text" id="train-name" class="form-input" placeholder="e.g. motor_1_1000rpm" />
+      </div>
+      <div class="form-row">
+        <label class="form-label">Capture Duration</label>
+        <div class="slider-row">
+          <input type="range" id="train-duration" min="10" max="60" value="20" class="slider" />
+          <span class="slider-val" id="train-duration-val">20s</span>
+        </div>
+      </div>
+
+      <div class="progress-wrap" id="train-progress-wrap" style="display:none;">
+        <div class="progress-header">
+          <span id="train-progress-label">Training…</span>
+          <span id="train-progress-pct">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="train-progress-fill"></div>
+        </div>
+        <div class="progress-meta" id="train-progress-meta">0 samples collected</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-accent" id="train-btn" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Start Training
+        </button>
+        <button class="btn btn-ghost" id="cancel-train-btn" style="display:none;">Cancel</button>
+      </div>
+
+      <!-- Requirements checklist -->
+      <div class="req-list" id="req-list">
+        <div class="req-item" id="req-serial">
+          <span class="req-dot"></span>
+          <span class="req-label">Serial port connected</span>
+        </div>
+        <div class="req-item" id="req-baseline">
+          <span class="req-dot"></span>
+          <span class="req-label">Baseline calibrated (hold motor still)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── SAVE SECTION ─── -->
+    <div class="panel-card" id="save-card" style="display:none;">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Save Model
+      </div>
+      <div class="form-row">
+        <label class="form-label">Save As</label>
+        <input type="text" id="save-name" class="form-input" placeholder="Model filename" />
+      </div>
+      <button class="btn btn-primary" id="save-btn">Save to Disk</button>
+    </div>
+
+  </aside>
+
+  <!-- ── Charts Area ── -->
+  <section class="charts-area">
+
+    <!-- Oscilloscope -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">
+          <span class="chart-dot cyan"></span>
+          Oscilloscope — Vibration Waveform
+        </div>
+        <div class="chart-badge" id="osc-badge">LIVE</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="waveform-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- FFT Spectrum -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">
+          <span class="chart-dot purple"></span>
+          FFT — Frequency Spectrum
+        </div>
+        <div class="chart-badge purple" id="fft-dominant-badge">0 Hz</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="fft-chart"></canvas>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── Right Panel ── -->
+  <aside class="right-panel">
+
+    <!-- Motor Control -->
+    <div class="panel-card motor-ctrl-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        Motor Control
+      </div>
+
+      <div class="motor-btns">
+        <button class="btn motor-btn" id="motor1-btn" data-motor="1" disabled>
+          <span class="motor-indicator" id="motor1-dot"></span>
+          Motor 1
+        </button>
+        <button class="btn motor-btn stop-btn" id="motor-stop-btn" data-motor="0" disabled>
+          &#9632; Stop
+        </button>
+        <button class="btn motor-btn" id="motor2-btn" data-motor="2" disabled>
+          <span class="motor-indicator" id="motor2-dot"></span>
+          Motor 2
+        </button>
+      </div>
+
+      <div class="motor-status-row">
+        <span class="motor-status-label">Active:</span>
+        <span class="motor-active-badge" id="motor-active-badge">NONE</span>
+      </div>
+
+      <div class="form-row" style="margin-top:4px;">
+        <label class="form-label">Speed (PWM 0–255)</label>
+        <div class="slider-row">
+          <input type="range" id="motor-speed" min="0" max="255" value="200" class="slider" />
+          <span class="slider-val" id="motor-speed-val">200</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Evaluate -->
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Evaluate Motor
+      </div>
+      <p class="panel-hint">Load a saved model, then start evaluation to detect anomalies.</p>
+      <button class="btn btn-primary" id="eval-start-btn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Start Evaluation
+      </button>
+      <button class="btn btn-ghost" id="eval-stop-btn" style="display:none;">Stop</button>
+    </div>
+
+    <!-- Saved Models -->
+    <div class="panel-card models-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        Saved Models
+        <button class="btn btn-ghost icon-btn" id="refresh-models-btn" title="Refresh">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+
+      <div id="models-list" class="models-list">
+        <div class="empty-state">No saved models yet.<br/>Train one to get started.</div>
+      </div>
+    </div>
+
+    <!-- System Log -->
+    <div class="panel-card log-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        System Log
+      </div>
+      <div class="log-list" id="log-list"></div>
+    </div>
+
+  </aside>
+
+</main>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<script src="/static/js/main.js"></script>
+</body>
+</html>
