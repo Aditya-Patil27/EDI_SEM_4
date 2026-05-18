@@ -11,16 +11,16 @@ Record real vibration data from your ESP32+ADXL345 to replace Synthetic training
 - Machine/motor to record from
 
 ### Recording Script
-Use the existing Flask app's baseline capture feature:
+Use the existing Flask app's capture feature:
 
 1. Start the app: `python app.py`
 2. Open `http://127.0.0.1:5050`
 3. Connect the serial port
 4. For each machine you want to add:
    - Run the machine in a **healthy (normal)** state
-   - Wait for baseline to lock (~80 samples, ~1 second)
-   - Click "Train Baseline" and let it run for 20+ seconds
-   - The collected features will be stored in `state['training_features']`
+   - Wait for baseline to calibrate automatically (~80 samples, ~1 second)
+   - Click "Start Training" and let it run for 20+ seconds
+   - The collected features will be used by `_finish_training_internal()` to train and save a per-company anomaly model
 
 ### Manual Data Capture (for larger datasets)
 Alternatively, save raw serial data to CSV:
@@ -60,28 +60,55 @@ data/custom/
 └── ...
 ```
 
+**Prerequisite**: The existing CWRU and JNU datasets should already be downloaded under `data/raw/cwru/` and `data/raw/jnu/` before retraining. The ingestion script expects these directories. See the CWRU data center (https://engineering.case.edu/bearingdatacenter/download-data-file) and JNU repository for download links.
+
 ## Step 3: Add Data Ingestion Adapter
 
-Edit `data_ingestion.py` to add a new `CustomAdapter`:
+Edit `data_ingestion.py` to add a new processing function following the existing pattern:
 
 ```python
-class CustomAdapter(BaseAdapter):
+def _process_custom():
     """Loads CSV data from data/custom/<company>/<label>_*.csv"""
-    def __init__(self, data_dir="data/custom"):
-        super().__init__()
-        self.data_dir = Path(data_dir)
+    import csv
+    custom_dir = os.path.join(RAW_DIR, 'custom')
+    if not os.path.exists(custom_dir):
+        log.warning("Custom directory not found, skipping")
+        return []
 
-    def load_data(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Walk directory, parse CSV files
-        # Assign integer company label per parent folder
-        # Return X, y, company_labels
-        pass
+    records = []
+    for company_dir in sorted(os.listdir(custom_dir)):
+        company_path = os.path.join(custom_dir, company_dir)
+        if not os.path.isdir(company_path):
+            continue
+        for fname in sorted(os.listdir(company_path)):
+            if not fname.endswith('.csv'):
+                continue
+            fpath = os.path.join(company_path, fname)
+            try:
+                sig = np.loadtxt(fpath, dtype=np.float64)
+            except Exception as e:
+                log.error(f"  Failed to load {fname}: {e}")
+                continue
+            if len(sig) < 128:
+                continue
+            windows = _segment_into_windows(sig)
+            for win in windows:
+                feats = _features_from_segment(win)
+                records.append({
+                    'filepath': fname,
+                    'raw_class': fname.split('_')[0],  # e.g. "normal_1.csv" -> "normal"
+                    'class': fname.split('_')[0],
+                    'dataset': company_dir,
+                    'format': 'csv',
+                    'features': feats,
+                })
+    log.info(f"  Custom: {len(records)} windows processed")
+    return records
 ```
 
-Or use the built-in interactive mode:
+Then register it in `ingest_all_datasets()`:
 ```python
-from data_ingestion import process_company_csv
-X, y = process_company_csv("MachineA", "path/to/file.csv")
+all_records.extend(_process_custom())
 ```
 
 ## Step 4: Update Config
@@ -118,8 +145,10 @@ python app.py                                         # start app, verify UI sho
 
 | Component | Min Samples | Recording Time (@ 100 Hz) |
 |-----------|-------------|---------------------------|
-| Normal baseline per company | 128 windows (~164 sec) | ~3 minutes |
-| Per-fault type (optional) | 50 windows (~64 sec) | ~1 minute |
+| Normal baseline per company | 128 windows (~82 sec) | ~2 minutes |
+| Per-fault type (optional) | 50 windows (~32 sec) | ~1 minute |
+
+*Note: `_segment_into_windows()` uses step=64 (50% overlap), so each window advances 0.64s at 100 Hz.*
 
 ## Notes
 - Keep the sensor placement consistent between recordings

@@ -49,6 +49,8 @@ except Exception:
 COMPANY_CLASSES = APP_CONFIG.get('companies', {}).get('classes', ['Unknown'])
 FEATURE_DIM = APP_CONFIG.get('feature', {}).get('dimension', 28)
 NUM_COMPANIES = len(COMPANY_CLASSES)
+SAMPLE_RATE = APP_CONFIG.get('streaming', {}).get('sample_rate', 100)
+WINDOW_SIZE = APP_CONFIG.get('streaming', {}).get('window_size', 128)
 
 # Company-aware model registry
 company_registry = PerCompanyModelRegistry(models_dir=COMPANY_MODELS_DIR)
@@ -89,7 +91,7 @@ ser = None
 ser_lock = threading.Lock()
 
 # Rolling raw sample buffers
-RAW_WINDOW = 128
+RAW_WINDOW = WINDOW_SIZE
 raw_buffer = []
 plot_buffer = []
 
@@ -111,7 +113,7 @@ def serial_reader():
     DOWNSAMPLE = 3
     plot_counter = 0
     feature_counter = 0
-    FEATURE_WINDOW = 128
+    FEATURE_WINDOW = WINDOW_SIZE
 
     while True:
         with ser_lock:
