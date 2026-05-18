@@ -9,9 +9,9 @@ __pycache__/
 model_best.pth
 model_quantized.pth
 
-# Training artifacts (regenerated on each run)
-data/processed/*.npy
-data/processed/*.json
+# Training/eval artifacts (regenerated each run)
+evaluation_report.json
+.pytest_cache/
 
 # IDE / OS
 .vscode/
