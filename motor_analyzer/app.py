@@ -21,7 +21,8 @@ from flask_socketio import SocketIO, emit
 from feature_pipeline import extract_features, dominant_frequency, build_fft_payload
 from ml_models import (
     CompanyClassifier, EnsembleAnomalyModel,
-    GMMAnomalyDetector, PerCompanyModelRegistry, TORCH_AVAILABLE
+    GMMAnomalyDetector, PerCompanyModelRegistry,
+    TransferLearningAdapter, TORCH_AVAILABLE
 )
 
 # ─────────────────────────────────────────────────────────────
@@ -576,8 +577,21 @@ def classifier_status():
 # ─────────────────────────────────────────────────────────────
 @app.route('/api/pretrained/info')
 def pretrained_info():
-    """Info about pretrained .pth weights from the ml repo."""
+    """Info about pretrained .pth weights + transfer adapter status."""
     pt_config = APP_CONFIG.get('pretrained', {})
+    adapter_cfg = pt_config.get('adapter', {})
+
+    transfer_model_path = os.path.join(MODELS_DIR, 'company_classifier_transfer.pth')
+    transfer_available = os.path.exists(transfer_model_path)
+    if transfer_available:
+        adapter = TransferLearningAdapter.load(transfer_model_path)
+        transfer_status = {
+            'trained': adapter.trained,
+            'classes': adapter.class_names,
+        }
+    else:
+        transfer_status = {'trained': False}
+
     result = {
         'available': False,
         'files': [],
@@ -585,8 +599,14 @@ def pretrained_info():
         'input_dim': pt_config.get('input_dim', 39),
         'num_classes': pt_config.get('num_classes', 3),
         'classes': pt_config.get('classes', []),
-        'note': 'Different feature space (39 audio features) than current app (28 vibration features). '
-                'Weights usable via offline pipeline.py or as transfer learning starting point.',
+        'adapter': {
+            'enabled': adapter_cfg.get('enabled', True),
+            'adapt_dim': adapter_cfg.get('adapt_dim', 28),
+            'fallback_to_sklearn': adapter_cfg.get('fallback_to_sklearn', True),
+        },
+        'transfer_model': transfer_status,
+        'note': 'Pretrained weights (39-dim audio) -> TransferLearningAdapter (28-dim vibration) '
+                'via Linear(28,39) expansion layer.',
     }
     for key in ['model_best', 'model_quantized']:
         path = pt_config.get(key, '')

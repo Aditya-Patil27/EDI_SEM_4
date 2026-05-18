@@ -119,6 +119,183 @@ else:
     _CNN_CLS = _SklearnCNN
 
 
+class TransferLearningAdapter:
+    """
+    Wraps pretrained 39-dim CNN with a 28→39 expansion layer for transfer learning.
+
+    Architecture:
+        Input (28) → Linear(28, 39) → ReLU → PretrainedCNN(39→3) → Output (3)
+
+    The pretrained CNN stays frozen; only the expansion layer trains initially.
+    When torch is unavailable, trains an sklearn RandomForest as fallback.
+
+    Usage:
+        adapter = TransferLearningAdapter(weights_path='model_best.pth')
+        adapter.train(X_28dim, y_company_labels)
+        idx, name, conf = adapter.predict(features)
+    """
+    PRETRAINED_CLASSES = ["Normal", "Unbalanced", "Bearing Fault"]
+
+    def __init__(self, weights_path: str = None, adapt_dim: int = 28,
+                 pretrain_dim: int = 39, num_classes: int = 3):
+        self.adapt_dim = adapt_dim
+        self.pretrain_dim = pretrain_dim
+        self.num_classes = num_classes
+        self.class_names = list(self.PRETRAINED_CLASSES)
+        self.trained = False
+        self.weights_path = weights_path
+
+        if TORCH_AVAILABLE and weights_path and os.path.exists(weights_path):
+            self._init_torch(weights_path)
+        else:
+            self._init_sklearn()
+
+    def _init_torch(self, weights_path):
+        self.pretrained_cnn = CNNDetector(
+            feature_dim=self.pretrain_dim, num_classes=self.num_classes)
+        data = torch.load(weights_path, map_location='cpu')
+        sd = data.get('model_state', data)
+        self.pretrained_cnn.load_state_dict(sd, strict=False)
+        for param in self.pretrained_cnn.parameters():
+            param.requires_grad = False
+        self.expansion = nn.Linear(self.adapt_dim, self.pretrain_dim)
+        logging.info(f"TransferLearningAdapter: loaded pretrained weights from {weights_path}")
+
+    def _init_sklearn(self):
+        if self.weights_path:
+            logging.warning(f"PyTorch unavailable — cannot load {self.weights_path}. "
+                            "Training sklearn fallback without transfer learning.")
+        self.model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', RandomForestClassifier(n_estimators=200, random_state=42))
+        ])
+
+    if TORCH_AVAILABLE:
+        def _forward_torch(self, X):
+            x = torch.tensor(X, dtype=torch.float32)
+            if x.ndim == 1:
+                x = x.unsqueeze(0)
+            if x.ndim == 2:
+                x = x.unsqueeze(1)
+            x = x.squeeze(1)
+            x = F.relu(self.expansion(x))
+            x = x.unsqueeze(1)
+            return self.pretrained_cnn(x)
+
+        @torch.no_grad()
+        def _predict_torch(self, X):
+            self.pretrained_cnn.eval()
+            out = self._forward_torch(X)
+            proba = F.softmax(out, dim=1).numpy()
+            idx = int(np.argmax(proba, axis=1)[0])
+            conf = float(np.max(proba, axis=1)[0])
+            return idx, conf, proba[0]
+
+        def _train_torch(self, X, y):
+            from sklearn.model_selection import train_test_split
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.2, random_state=42)
+            X_train_t = torch.tensor(X_train, dtype=torch.float32)
+            y_train_t = torch.tensor(y_train, dtype=torch.long)
+            X_val_t = torch.tensor(X_val, dtype=torch.float32)
+            y_val_t = torch.tensor(y_val, dtype=torch.long)
+
+            criterion = nn.CrossEntropyLoss()
+            optimizer = torch.optim.Adam(self.expansion.parameters(), lr=0.001)
+
+            best_loss = float('inf')
+            for epoch in range(50):
+                self.pretrained_cnn.eval()
+                self.expansion.train()
+                optimizer.zero_grad()
+                x = X_train_t
+                x = F.relu(self.expansion(x))
+                x = x.unsqueeze(1)
+                out = self.pretrained_cnn(x)
+                loss = criterion(out, y_train_t)
+                loss.backward()
+                optimizer.step()
+
+                self.expansion.eval()
+                with torch.no_grad():
+                    x_val = F.relu(self.expansion(X_val_t))
+                    x_val = x_val.unsqueeze(1)
+                    val_out = self.pretrained_cnn(x_val)
+                    val_loss = criterion(val_out, y_val_t)
+                if val_loss.item() < best_loss:
+                    best_loss = val_loss.item()
+
+    def train(self, X, y, class_names=None):
+        if class_names:
+            self.class_names = list(class_names)
+        if TORCH_AVAILABLE and hasattr(self, 'expansion'):
+            self._train_torch(X, y)
+        else:
+            self.model.fit(X, y)
+        self.trained = True
+
+    def predict(self, features):
+        if not self.trained:
+            return 0, "Unknown", 0.0
+        feats = np.array(features)
+        if feats.ndim == 1:
+            feats = feats.reshape(1, -1)
+        if TORCH_AVAILABLE and hasattr(self, 'expansion'):
+            idx, conf, proba = self._predict_torch(feats)
+        else:
+            proba = self.model.predict_proba(feats)
+            idx = int(np.argmax(proba, axis=1)[0])
+            conf = float(np.max(proba, axis=1)[0])
+        name = self.class_names[idx] if idx < len(self.class_names) else "Unknown"
+        return idx, name, conf
+
+    def save(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if TORCH_AVAILABLE and hasattr(self, 'expansion'):
+            torch.save({
+                'expansion': self.expansion.state_dict(),
+                'pretrained_cnn': self.pretrained_cnn.state_dict(),
+                'class_names': self.class_names,
+            }, path)
+        else:
+            with open(path, 'wb') as f:
+                pickle.dump({
+                    'model': self.model,
+                    'class_names': self.class_names,
+                }, f)
+
+    @classmethod
+    def load(cls, path, adapt_dim=28, pretrain_dim=39, num_classes=3):
+        if not os.path.exists(path):
+            return cls()
+        try:
+            if TORCH_AVAILABLE:
+                data = torch.load(path, map_location='cpu')
+                obj = cls.__new__(cls)
+                obj.adapt_dim = adapt_dim
+                obj.pretrain_dim = pretrain_dim
+                obj.num_classes = num_classes
+                obj.class_names = data.get('class_names', list(cls.PRETRAINED_CLASSES))
+                obj._init_torch(obj.weights_path or '')
+                if 'expansion' in data:
+                    obj.expansion.load_state_dict(data['expansion'])
+                if 'pretrained_cnn' in data:
+                    obj.pretrained_cnn.load_state_dict(data['pretrained_cnn'])
+                obj.trained = True
+                return obj
+            else:
+                with open(path, 'rb') as f:
+                    data = pickle.load(f)
+                obj = cls()
+                obj.model = data['model']
+                obj.class_names = data.get('class_names', list(cls.PRETRAINED_CLASSES))
+                obj.trained = True
+                return obj
+        except Exception as e:
+            logging.warning(f"Failed to load transfer adapter: {e}")
+            return cls()
+
+
 class CompanyClassifier:
     """
     Company/machine-type identifier.

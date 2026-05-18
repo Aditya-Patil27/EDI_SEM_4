@@ -27,7 +27,7 @@ from generate_synthetic_data import (
     normal_vibration, unbalanced_vibration, bearing_fault_vibration
 )
 from feature_pipeline import extract_features
-from ml_models import EnsembleAnomalyModel, CompanyClassifier
+from ml_models import EnsembleAnomalyModel, CompanyClassifier, TransferLearningAdapter
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -130,7 +130,48 @@ def evaluate_company_classifier_sweep():
     logging.info("")
     logging.info("=== Company Classifier on REAL Datasets (CWRU+JNU+Synthetic) ===")
     eval_real_company_classifier()
+
+    # Check for trained transfer model
+    transfer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'models', 'company_classifier_transfer.pth')
+    if os.path.exists(transfer_path):
+        logging.info("=== Transfer Learning Adapter Evaluation ===")
+        eval_transfer_classifier(transfer_path)
+    else:
+        logging.info("(No transfer model found at models/company_classifier_transfer.pth)")
+        logging.info("  Train with: python train_pipeline.py --transfer")
+
     return results
+
+
+def eval_transfer_classifier(model_path):
+    """Evaluate saved TransferLearningAdapter on real dataset."""
+    import json
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'processed')
+    X = np.load(os.path.join(data_dir, 'X_all.npy'))
+    company_labels = np.load(os.path.join(data_dir, 'company_labels.npy'))
+    with open(os.path.join(data_dir, 'metadata.json')) as f:
+        meta = json.load(f)
+    company_names = meta['companies']
+
+    from sklearn.model_selection import train_test_split
+    _, X_te, _, y_te = train_test_split(X, company_labels, test_size=0.2, random_state=42, stratify=company_labels)
+
+    adapter = TransferLearningAdapter.load(model_path)
+    if not adapter.trained:
+        logging.warning("  Transfer adapter not trained, skipping")
+        return
+
+    preds = []
+    for i in range(len(X_te)):
+        idx, name, conf = adapter.predict(X_te[i])
+        preds.append(idx)
+
+    acc = accuracy_score(y_te, preds)
+    report = classification_report(y_te, preds, target_names=company_names, output_dict=True)
+    logging.info(f"  Accuracy: {acc:.4f}")
+    logging.info(f"  F1: { {c: round(report[c]['f1-score'], 3) for c in company_names} }")
+    logging.info(f"  NOTE: Uses TransferLearningAdapter with 28->39 expansion + pretrained CNN")
 
 
 def eval_real_company_classifier():
@@ -309,11 +350,21 @@ def main():
     parser.add_argument('--company', action='store_true', help='Company classifier only')
     parser.add_argument('--fault', action='store_true', help='Anomaly detection only')
     parser.add_argument('--live', action='store_true', help='Live simulation only')
+    parser.add_argument('--transfer', action='store_true', help='Evaluate transfer model on real data')
     args = parser.parse_args()
 
     all_results = {}
 
-    if args.quick:
+    if args.transfer:
+        logging.info("=== TRANSFER MODEL EVALUATION ===")
+        transfer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     'models', 'company_classifier_transfer.pth')
+        if os.path.exists(transfer_path):
+            all_results['transfer'] = eval_transfer_classifier(transfer_path)
+        else:
+            logging.error("No transfer model found. Train with: python train_pipeline.py --transfer")
+            return
+    elif args.quick:
         logging.info("=== QUICK SMOKE TEST ===")
         all_results['features'] = evaluate_feature_extraction()
         all_results['company_benchmark'] = evaluate_company_classifier_sweep()

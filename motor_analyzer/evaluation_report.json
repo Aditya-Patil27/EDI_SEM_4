@@ -1,9 +1,19 @@
 {
-  "evaluation_timestamp": "2026-05-18 15:27:15",
+  "evaluation_timestamp": "2026-05-18 15:47:15",
   "system": "MotorSense Evaluation Pipeline",
   "feature_dimension": 28,
   "sample_rate_hz": 100,
   "components": {
+    "features": {
+      "rms_separation": {
+        "normal_mean_rms": 0.7137,
+        "unbalanced_mean_rms": 0.7468,
+        "bearing_mean_rms": 0.3125,
+        "normal_vs_unbalanced_ratio": 1.05,
+        "normal_vs_bearing_ratio": 0.44
+      },
+      "all_features_finite": true
+    },
     "company_benchmark": {
       "overlap_0.0": {
         "accuracy": 1.0,
@@ -239,7 +249,23 @@
         },
         "overlap": 1.0
       }
+    },
+    "anomaly": {
+      "accuracy": 0.9667,
+      "precision": 0.9524,
+      "recall": 1.0,
+      "f1_score": 0.9756,
+      "test_samples": 90,
+      "anomaly_ratio": 0.7
+    },
+    "live": {
+      "total_windows": 1873,
+      "anomaly_windows": 26,
+      "anomaly_rate": 0.0139,
+      "avg_inference_ms": 33.47,
+      "p99_inference_ms": 47.33,
+      "total_simulation_sec": 62.707
     }
   },
-  "verdict": "INCOMPLETE"
+  "verdict": "PASS"
 }

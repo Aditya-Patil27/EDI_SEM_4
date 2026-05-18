@@ -2,10 +2,12 @@
 Train pipeline — loads ingested data, trains CompanyClassifier + per-company
 anomaly models, and persists them for the Flask app.
 """
+
 import os
 import sys
 import json
 import yaml
+import argparse
 import numpy as np
 import logging
 from collections import defaultdict
@@ -16,7 +18,7 @@ log = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-from ml_models import CompanyClassifier, PerCompanyModelRegistry
+from ml_models import CompanyClassifier, PerCompanyModelRegistry, TransferLearningAdapter
 
 PROCESSED_DIR = os.path.join(BASE_DIR, 'data', 'processed')
 MODELS_DIR = os.path.join(BASE_DIR, 'models')
@@ -127,17 +129,71 @@ def train_anomaly_models(X, y, company_labels, metadata):
     return registry
 
 
+def train_transfer_classifier(X, company_labels, metadata):
+    """Train company classifier using TransferLearningAdapter (pretrained weights)."""
+    cfg = load_config()
+    pretrained = cfg.get('pretrained', {})
+    weights_path = os.path.join(BASE_DIR, pretrained.get('model_best', 'model_best.pth'))
+    adapter_cfg = pretrained.get('adapter', {})
+    adapt_dim = adapter_cfg.get('adapt_dim', 28)
+    num_classes = pretrained.get('num_classes', 3)
+
+    company_names = metadata['companies']
+    # Map company names to pretrained class indices for transfer learning
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, company_labels, test_size=0.2, random_state=42, stratify=company_labels
+    )
+
+    log.info(f"=== Training Transfer Learning Adapter ===")
+    log.info(f"  Weights: {weights_path}")
+    log.info(f"  Adapter: {adapt_dim} -> {pretrained.get('input_dim', 39)}")
+    log.info(f"  Classes: {num_classes}")
+
+    adapter = TransferLearningAdapter(
+        weights_path=weights_path,
+        adapt_dim=adapt_dim,
+        pretrain_dim=pretrained.get('input_dim', 39),
+        num_classes=num_classes,
+    )
+    adapter.train(X_train, y_train, class_names=company_names)
+
+    # Evaluate
+    predictions = []
+    for i in range(len(X_test)):
+        idx, name, conf = adapter.predict(X_test[i])
+        predictions.append(idx)
+
+    from sklearn.metrics import accuracy_score, classification_report
+    acc = accuracy_score(y_test, predictions)
+    log.info(f"  Test accuracy: {acc:.4f}")
+    report = classification_report(y_test, predictions, target_names=company_names, output_dict=True)
+    for c in company_names:
+        log.info(f"  {c}: F1={report[c]['f1-score']:.3f}, support={report[c]['support']}")
+
+    return adapter, company_names, acc
+
+
 def main():
+    parser = argparse.ArgumentParser(description='MotorSense Training Pipeline')
+    parser.add_argument('--transfer', action='store_true',
+                        help='Use TransferLearningAdapter with pretrained weights')
+    args = parser.parse_args()
+
     X, y, company_labels, metadata = load_processed_data()
     if X is None:
         return
 
-    clf, company_names, acc = train_company_classifier(X, company_labels, metadata)
-
-    # Save classifier
-    cls_path = os.path.join(MODELS_DIR, 'company_classifier.pth')
-    clf.save(cls_path, company_names=company_names)
-    log.info(f"CompanyClassifier saved -> {cls_path}")
+    if args.transfer:
+        clf, company_names, acc = train_transfer_classifier(X, company_labels, metadata)
+        cls_path = os.path.join(MODELS_DIR, 'company_classifier_transfer.pth')
+        clf.save(cls_path)
+        log.info(f"Transfer adapter saved -> {cls_path}")
+    else:
+        clf, company_names, acc = train_company_classifier(X, company_labels, metadata)
+        cls_path = os.path.join(MODELS_DIR, 'company_classifier.pth')
+        clf.save(cls_path, company_names=company_names)
+        log.info(f"CompanyClassifier saved -> {cls_path}")
 
     # Save manifest
     manifest = {'companies': company_names, 'accuracy': round(acc, 4)}
@@ -150,7 +206,6 @@ def main():
     train_anomaly_models(X, y, company_labels, metadata)
 
     log.info("\nDone. All models trained and saved.")
-    log.info(f"  Classifier: {cls_path}")
     log.info(f"  Anomaly models: {COMPANY_MODELS_DIR}/")
 
 

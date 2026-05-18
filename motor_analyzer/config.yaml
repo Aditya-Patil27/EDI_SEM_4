@@ -48,8 +48,8 @@ paths:
 # Architecture: CNNDetector (conv1->pool->conv2->pool->fc1->fc2)
 # ~106K params, input_dim=39, num_classes=3
 # NOTE: Different feature space than current motor_analyzer (28-dim vibration).
-# Weights can be used via pipeline.py (offline batch) or as transfer learning
-# starting point once company-labeled vibration data is collected.
+# TransferLearningAdapter wraps these weights with a 28->39 expansion layer
+# to enable transfer learning on vibration data.
 pretrained:
   model_best: "model_best.pth"
   model_quantized: "model_quantized.pth"
@@ -57,3 +57,7 @@ pretrained:
   input_dim: 39
   num_classes: 3
   classes: ["Normal", "Unbalanced", "Bearing Fault"]
+  adapter:
+    adapt_dim: 28
+    enabled: true
+    fallback_to_sklearn: true   # train sklearn RF when torch unavailable
