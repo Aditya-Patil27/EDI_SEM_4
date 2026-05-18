@@ -216,6 +216,12 @@ const el = {
   // Prerequisites
   reqSerial:       $('req-serial'),
   reqBaseline:     $('req-baseline'),
+
+  // Company
+  companyBadge:    $('company-badge'),
+  companyConf:     $('company-conf'),
+  companyDetail:   $('company-detail'),
+  companyModelName: $('company-model-name'),
 };
 
 // ─────────────────────────────────────────────────────────
@@ -230,6 +236,9 @@ let appState = {
   isAnomaly: false,
   motor: 0,          // 0=stopped, 1=motor1, 2=motor2
   motorSpeed: 200,
+  companyName: 'Unknown',
+  companyIdentified: false,
+  companyConfidence: 0,
 };
 
 // ─────────────────────────────────────────────────────────
@@ -284,6 +293,27 @@ socket.on('sensor_data', (d) => {
   el.anomalyAlert.style.display = showAnomaly ? 'flex' : 'none';
 
   appState.isAnomaly = showAnomaly;
+
+  // Update company info if available
+  if (d.company_identified && d.company) {
+    appState.companyIdentified = true;
+    appState.companyName = d.company;
+    el.companyBadge.textContent = d.company;
+    el.companyBadge.className = 'company-badge identified';
+  }
+});
+
+// Company identification event
+socket.on('company_identified', (d) => {
+  appState.companyIdentified = true;
+  appState.companyName = d.company;
+  appState.companyConfidence = d.confidence;
+  el.companyBadge.textContent = d.company;
+  el.companyBadge.className = 'company-badge identified';
+  el.companyConf.textContent = `${(d.confidence * 100).toFixed(0)}% confidence`;
+  el.companyDetail.style.display = 'flex';
+  el.companyModelName.textContent = d.company + '_model';
+  log(`Machine identified as "${d.company}" (${(d.confidence * 100).toFixed(0)}% confidence)`, 'success');
 });
 
 socket.on('status_update', (d) => {
@@ -700,7 +730,20 @@ el.motorSpeedSlider.addEventListener('change', async () => {
   await loadModels();
 
   // Check if already connected from server side
-  const status = await api('/api/status');
+  const [status, companyStatus] = await Promise.all([
+    api('/api/status'),
+    api('/api/company/status'),
+  ]);
+  if (companyStatus.identified) {
+    appState.companyIdentified = true;
+    appState.companyName = companyStatus.current_company;
+    appState.companyConfidence = companyStatus.confidence;
+    el.companyBadge.textContent = companyStatus.current_company;
+    el.companyBadge.className = 'company-badge identified';
+    el.companyConf.textContent = `${(companyStatus.confidence * 100).toFixed(0)}% confidence`;
+    el.companyDetail.style.display = 'flex';
+    el.companyModelName.textContent = companyStatus.current_company + '_model';
+  }
   if (status.connected) {
     setConnected(true);
     appState.baselineReady = status.baseline_ready;

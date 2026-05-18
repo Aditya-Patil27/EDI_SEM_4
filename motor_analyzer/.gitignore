@@ -1,0 +1,9 @@
+# Raw datasets (large, download separately)
+data/raw/
+
+# Bytecode
+__pycache__/
+
+# Pretrained weights from ml repo (different feature space)
+model_best.pth
+model_quantized.pth

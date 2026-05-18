@@ -1,0 +1,245 @@
+{
+  "evaluation_timestamp": "2026-05-18 15:27:15",
+  "system": "MotorSense Evaluation Pipeline",
+  "feature_dimension": 28,
+  "sample_rate_hz": 100,
+  "components": {
+    "company_benchmark": {
+      "overlap_0.0": {
+        "accuracy": 1.0,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 63.0
+          },
+          "accuracy": 1.0,
+          "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          }
+        },
+        "overlap": 0.0
+      },
+      "overlap_0.2": {
+        "accuracy": 1.0,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 63.0
+          },
+          "accuracy": 1.0,
+          "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          }
+        },
+        "overlap": 0.2
+      },
+      "overlap_0.4": {
+        "accuracy": 1.0,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 63.0
+          },
+          "accuracy": 1.0,
+          "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          }
+        },
+        "overlap": 0.4
+      },
+      "overlap_0.6": {
+        "accuracy": 1.0,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 63.0
+          },
+          "accuracy": 1.0,
+          "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          }
+        },
+        "overlap": 0.6
+      },
+      "overlap_0.8": {
+        "accuracy": 1.0,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 63.0
+          },
+          "accuracy": 1.0,
+          "macro avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 216.0
+          }
+        },
+        "overlap": 0.8
+      },
+      "overlap_1.0": {
+        "accuracy": 0.6852,
+        "num_companies": 3,
+        "num_samples": 720,
+        "classification_report": {
+          "Company_A": {
+            "precision": 0.8105263157894737,
+            "recall": 0.9625,
+            "f1-score": 0.88,
+            "support": 80.0
+          },
+          "Company_B": {
+            "precision": 0.5789473684210527,
+            "recall": 0.3013698630136986,
+            "f1-score": 0.3963963963963964,
+            "support": 73.0
+          },
+          "Company_C": {
+            "precision": 0.5903614457831325,
+            "recall": 0.7777777777777778,
+            "f1-score": 0.6712328767123288,
+            "support": 63.0
+          },
+          "accuracy": 0.6851851851851852,
+          "macro avg": {
+            "precision": 0.6599450433312196,
+            "recall": 0.6805492135971588,
+            "f1-score": 0.6492097577029085,
+            "support": 216.0
+          },
+          "weighted avg": {
+            "precision": 0.6680464548251486,
+            "recall": 0.6851851851851852,
+            "f1-score": 0.6556694822676558,
+            "support": 216.0
+          }
+        },
+        "overlap": 1.0
+      }
+    }
+  },
+  "verdict": "INCOMPLETE"
+}

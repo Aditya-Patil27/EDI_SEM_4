@@ -1,0 +1,59 @@
+project:
+  name: "MotorSense"
+  seed: 42
+
+companies:
+  classes:
+    - "Unknown"
+    - "CWRU"
+    - "JNU"
+    - "Synthetic"
+  fingerprint_samples: 512
+  use_synthetic: true   # set false once real ESP32 data collected
+
+feature:
+  window_size: 128
+  sample_rate: 100
+  n_fft: 128
+  dimension: 28
+  spectral_bands: 10
+
+model:
+  cnn:
+    conv1_channels: 16
+    conv2_channels: 32
+    kernel_size: 3
+    fc1_units: 64
+    dropout: 0.2
+  anomaly:
+    confidence_threshold: 0.90
+    consensus_windows: 5
+  company_classifier_path: "models/company_classifier.pth"
+
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  patience: 10
+  company_noise_scale: 0.0   # NOTE: 0=perfect separation on public datasets.
+                             # Realistic overlap benchmark uses evaluate_pipeline.py --company
+
+paths:
+  models_dir: "models"
+  company_models_dir: "models/companies"
+
+# Pretrained weights from ml repo (https://github.com/Aditya-Patil27/ml)
+# Trained on 39-dim audio features (MFCC + spectral bands)
+# 3 classes: Normal, Unbalanced, Bearing Fault
+# Architecture: CNNDetector (conv1->pool->conv2->pool->fc1->fc2)
+# ~106K params, input_dim=39, num_classes=3
+# NOTE: Different feature space than current motor_analyzer (28-dim vibration).
+# Weights can be used via pipeline.py (offline batch) or as transfer learning
+# starting point once company-labeled vibration data is collected.
+pretrained:
+  model_best: "model_best.pth"
+  model_quantized: "model_quantized.pth"
+  source: "ml_repo"
+  input_dim: 39
+  num_classes: 3
+  classes: ["Normal", "Unbalanced", "Bearing Fault"]
