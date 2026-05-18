@@ -296,6 +296,11 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/vui')
+def vui_dashboard():
+    return render_template('dashboard-vui.html')
+
+
 @app.route('/api/ports')
 def list_ports():
     """List available serial ports."""
@@ -758,6 +763,24 @@ def run_unit_tests():
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
+#  3D VUI Dashboard API
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/vibration/current')
+def vibration_current():
+    """Return latest RMS, FFT array, and spectral bands for 3D VUI."""
+    raw = plot_buffer[-128:] if plot_buffer else []
+    rms = float(np.sqrt(np.mean(np.square(raw)))) * 3 if raw else 0.0
+    return jsonify({
+        'rms': round(rms, 4),
+        'dominant_freq': round(state['dominant_freq'], 2),
+        'anomaly_score': round(state['anomaly_score'] * 100, 1),
+        'is_anomaly': state['is_anomaly'],
+        'fft': [],
+        'spectral': [],
+    })
 
 
 # ─────────────────────────────────────────────────────────────

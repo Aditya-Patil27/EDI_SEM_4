@@ -67,6 +67,43 @@ body {
 /* ══════════════════════════════════════════════════
    HEADER
    ══════════════════════════════════════════════════ */
+/* ── 3D VUI Dashboard Styles ── */
+.vui-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+.vui-full { grid-column: 1 / -1; }
+.vui-panel {
+  background: var(--glass-bg, #1A1F2ECC);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+  border-radius: 12px;
+  padding: 12px;
+  position: relative;
+  min-height: 320px;
+}
+.vui-panel h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim, #6B7280);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.vui-canvas-wrap {
+  width: 100%;
+  height: 300px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.vui-canvas-wrap canvas { display: block; }
+@media (max-width: 1024px) {
+  .vui-layout { grid-template-columns: 1fr; }
+}
+
 .header {
   display: flex;
   align-items: center;
