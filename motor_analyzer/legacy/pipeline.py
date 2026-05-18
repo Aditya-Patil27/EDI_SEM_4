@@ -7,8 +7,9 @@ Replaced by:
   - app.py               (Flask backend for ESP32 real-time inference)
   - evaluate_pipeline.py (end-to-end evaluation on 28-dim features)
 """
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import argparse
-import os
 import time
 import json
 import logging

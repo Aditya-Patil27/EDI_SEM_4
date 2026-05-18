@@ -3,7 +3,18 @@ data/raw/
 
 # Bytecode
 __pycache__/
+*.pyc
 
 # Pretrained weights from ml repo (different feature space)
 model_best.pth
 model_quantized.pth
+
+# Training artifacts (regenerated on each run)
+data/processed/*.npy
+data/processed/*.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,151 @@
+# Component-Level File Diagrams
+
+This document contains individual flowcharts for every core script in the TinyML Fault Classifier pipeline. You can use these to walk your project guide through the exact logic happening under the hood of each file.
+
+---
+
+## 1. [pipeline.py](file:///c:/Users/app27/Downloads/ml/pipeline.py) (The Orchestrator)
+**Purpose:** Acts as the main conductor. It processes the command-line arguments and conditionally executes the 6 stages of the pipeline in sequence. It also houses the final on-device moderation simulation (the "Consensus Logic").
+
+```mermaid
+graph TD
+    A([CLI Args: --ingest, --train, etc.]) --> B{Which stages flag?}
+    B -->|Stage 1| C[src/data_ingestion.py]
+    B -->|Stage 2| D[src/preprocessing.py]
+    B -->|Stage 3| E[src/train.py]
+    B -->|Stage 4| F[src/quantization.py]
+    B -->|Stage 5| G[evaluate_pipeline]
+    B -->|Stage 6| H[src/xai_audit.py]
+
+    subgraph evaluate_pipeline (Final Logic)
+        G1[Load Quantized Model] --> G2[Predict Probas on Test Data]
+        G2 --> G3{Is Max P > 90% and NOT Normal?}
+        G3 -->|Yes| G4[Increment Consensus Window]
+        G3 -->|No| G5[Reset Consensus Window to 0]
+        G4 --> G6{Windows == 5 ?}
+        G6 -->|Yes| G7(((Trigger Alert)))
+        G6 -->|No| G2
+    end
+```
+
+---
+
+## 2. [src/data_ingestion.py](file:///c:/Users/app27/Downloads/ml/src/data_ingestion.py)
+**Purpose:** Standardizes chaotic public datasets (MAFAULDA, NASA IMS, Unbalance) into a single, predictable `manifest.json` file. 
+
+```mermaid
+graph TD
+    A[(Raw Data Folders)] --> B{Scan config.yaml}
+    B --> C[MAFAULDA Adapter: Extract Folders]
+    B --> D[NASA IMS Adapter: Parse Chronological Sequences]
+    B --> E[Unbalance Adapter: Parse CSV Columns]
+    B --> F[Generic Adapter: Fallback]
+    
+    C --> G{Class Mapper}
+    D --> G
+    E --> G
+    F --> G
+    
+    G -->|Maps to Normal/Unbalanced/Bearing Fault| H[Calculate MD5 Checksum]
+    H --> I[(manifest.json)]
+```
+
+---
+
+## 3. [src/preprocessing.py](file:///c:/Users/app27/Downloads/ml/src/preprocessing.py)
+**Purpose:** The hardest mathematical lifting in the project. Converts variable-length, variable-sample-rate audio files mapped in `manifest.json` into identical 39-feature floating-point vectors for the Neural Network.
+
+```mermaid
+graph TD
+    A[(manifest.json)] --> B[Load Audio/CSV File]
+    B --> C{Correct Sample Rate?}
+    C -->|No| D[Polyphase Resample to 8000 Hz]
+    C -->|Yes| E
+    D --> E[Subtract DC Offset]
+    E --> F[Apply 4th-Order Butterworth Bandpass: 50Hz-3500Hz]
+    F --> G[Peak Amplitude Normalization]
+    
+    G --> H{Sliding Window Chunking}
+    H -->|256 Samples, 50% Overlap| I[Feature Extraction Logic]
+    
+    subgraph Feature Extraction (Per Window)
+        I --> J1[Time Domain: RMS, Kurtosis, Crest]
+        I --> J2[Spectral Domain: 10 FFT Bins]
+        I --> J3[Cepstral Domain: 13 MFCCs, 13 Deltas]
+    end
+    
+    J1 -.-> K
+    J2 -.-> K
+    J3 -.-> K
+    K[Concatenate: Exact 39 Feature Vector] --> L[(Save X_features.npy & y_labels.npy)]
+```
+
+---
+
+## 4. [src/train.py](file:///c:/Users/app27/Downloads/ml/src/train.py)
+**Purpose:** Trains the 'Bouncer' (GMM Anomaly Detector) and the 'Classifier' (PyTorch 1D-CNN) using advanced sampling techniques to handle rare mechanical faults.
+
+```mermaid
+graph TD
+    A[(X_features & y_labels)] --> B[Stratified Group Split: Train/Val/Test]
+    B --> C[SMOTE: Sythesize minority classes]
+    C --> D[Add Gaussian Noise Augmentation]
+    
+    subgraph GMM Training
+        D --> E{Filter 'Normal' Class Only}
+        E --> F[Fit Gaussian Mixture Model]
+        F --> G[Calculate 5th Percentile Likelihood Threshold]
+    end
+    
+    subgraph PyTorch CNN Training
+        D --> H[Initialize 1D-CNN]
+        H --> I[Adam Optimizer + Cosine Annealing Learning Rate]
+        I --> J{Early Stopping Watcher on Val Loss}
+        J -->|Improves| K[Save Weights]
+        J -->|Stalls 10 epochs| L[Halt Training]
+    end
+    
+    L --> M[(model_best.pth)]
+```
+
+---
+
+## 5. [src/quantization.py](file:///c:/Users/app27/Downloads/ml/src/quantization.py)
+**Purpose:** Compresses the massive 32-bit floating-point (FP32) Model weights into highly restrictive 8-bit integers (INT8) so it fits on a Microcontroller (MCU). Validates speed performance.
+
+```mermaid
+graph TD
+    A[(model_best.pth FP32)] --> B[Load Model to CPU]
+    B --> C[PyTorch Dynamic Quantization]
+    C -->|Target 'nn.Linear' layers| D[Convert Weights to qint8]
+    D --> E[(model_quantized.pth INT8)]
+    
+    subgraph Profiler
+        E --> F[Load Mock Inference Vector]
+        F --> G[Run 10 Warmup Loops]
+        G --> H[Run 100 Measurement Loops]
+        H --> I{Avg Latency < 50ms?}
+        I -->|Yes| J[Pass]
+        I -->|No| K[Fail / Warn]
+    end
+```
+
+---
+
+## 6. [src/xai_audit.py](file:///c:/Users/app27/Downloads/ml/src/xai_audit.py)
+**Purpose:** The 'Polygraph Test' for the AI. Asserts that the model actually learned the physics of a motor and didn't just memorize the background noise of the factory.
+
+```mermaid
+graph TD
+    A[(model_best.pth)] --> B[Load PyTorch Model]
+    B --> C[Initialize SHAP DeepExplainer]
+    C --> D[Feed Test Sub-Sample into Explainer]
+    D --> E[Calculate Mean Absolute SHAP values per Feature]
+    E --> F[Find Feature #1 with Highest Attribution]
+    
+    F --> G{Is Top Feature == 'Band_0'?}
+    G -->|Yes| H(((CRITICAL WARNING: 50Hz Mains Hum Detected!)))
+    G -->|No| I[Generate Bar Chart]
+    H --> J[(shap_explanations.json)]
+    I --> J
+```

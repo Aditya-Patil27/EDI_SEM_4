@@ -94,8 +94,8 @@ replay:
 # ─────────────────────────────────────────────────────────────
 pretrained:
   deprecated: true
-  model_best: "model_best.pth"
-  model_quantized: "model_quantized.pth"
+  model_best: "legacy/models/pretrained/model_best.pth"
+  model_quantized: "legacy/models/pretrained/model_quantized.pth"
   source: "ml_repo"
   input_dim: 39
   num_classes: 3
