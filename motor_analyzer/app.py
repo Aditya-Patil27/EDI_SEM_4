@@ -89,6 +89,7 @@ ser = None
 ser_lock = threading.Lock()
 
 # Rolling raw sample buffers
+RAW_WINDOW = 128
 raw_buffer = []
 plot_buffer = []
 
@@ -643,6 +644,46 @@ def pretrained_weights_summary():
         'reason': 'Pretrained weights are from audio MFCC pipeline (39-dim). '
                   'Current app uses 28-dim vibration features. Retraining needed.',
     })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Dataset Replay Injection (for cwru_replay.py)
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/inject', methods=['POST'])
+def inject_samples():
+    """Direct buffer injection for CWRU replay bridge (dev only)."""
+    global raw_buffer, plot_buffer
+    try:
+        data = request.get_json()
+    except Exception:
+        return jsonify({'ok': False, 'error': 'invalid JSON'}), 400
+    vals = data.get('samples', [])
+    if not vals:
+        return jsonify({'ok': True, 'injected': 0})
+
+    if not state['baseline_ready']:
+        state['baseline_samples'].extend(vals)
+        if len(state['baseline_samples']) >= 80:
+            state['baseline'] = float(np.mean(state['baseline_samples'][:80]))
+            state['baseline_ready'] = True
+            state['status'] = 'BASELINE LOCKED (replay) ✓'
+            state['status_level'] = 'success'
+            socketio.emit('status_update', {
+                'status': state['status'],
+                'level': state['status_level'],
+                'baseline': state['baseline'],
+            })
+
+    raw_buffer.extend(vals)
+    if len(raw_buffer) > RAW_WINDOW * 4:
+        raw_buffer = raw_buffer[-RAW_WINDOW * 2:]
+
+    baseline = state.get('baseline', float(np.mean(vals)))
+    plot_buffer.extend([round(v - baseline, 4) for v in vals])
+    if len(plot_buffer) > 600:
+        plot_buffer = plot_buffer[-600:]
+
+    return jsonify({'ok': True, 'injected': len(vals)})
 
 
 # ─────────────────────────────────────────────────────────────

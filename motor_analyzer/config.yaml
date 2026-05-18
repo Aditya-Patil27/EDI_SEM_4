@@ -41,6 +41,12 @@ training:
 paths:
   models_dir: "models"
   company_models_dir: "models/companies"
+  cwru_data_dir: "data/raw/cwru"
+
+replay:
+  target_fs: 100
+  chunk_size: 100
+  app_url: "http://127.0.0.1:5050"
 
 # Pretrained weights from ml repo (https://github.com/Aditya-Patil27/ml)
 # Trained on 39-dim audio features (MFCC + spectral bands)
