@@ -3,6 +3,13 @@ Motor Frequency Analyzer — Flask Backend
 ESP32 + ADXL345 → Real-time FFT + ML anomaly detection
 """
 
+# ── eventlet MUST be monkey-patched before ANY other import ──
+# Importing serial/threading before this causes EINVAL (errno 22)
+# on macOS when pyserial's tcsetattr runs inside the patched I/O layer.
+import eventlet
+eventlet.monkey_patch()
+import eventlet.tpool          # must import after monkey_patch; not auto-loaded as attribute
+
 import os
 import sys
 import time
@@ -15,8 +22,6 @@ import numpy as np
 from numpy import polyfit
 from scipy import signal
 from scipy.fft import rfft, rfftfreq
-import eventlet
-eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
@@ -82,8 +87,6 @@ state = {
     'current_model_obj': None,
     'status': 'IDLE — Connect a serial port to begin',
     'status_level': 'info',   # info | warning | error | success | training
-    'motor': 0,               # 0=stopped, 1=motor1, 2=motor2
-    'motor_speed': 200,       # PWM 0-255
     'company_idx': 0,
     'company_name': 'Unknown',
     'company_confidence': 0.0,
@@ -131,6 +134,22 @@ def build_model(model_type: str = 'ensemble'):
 # ─────────────────────────────────────────────────────────────
 #  Serial Reader Thread
 # ─────────────────────────────────────────────────────────────
+def _drain_serial(s):
+    """Read all available lines from serial in a real OS thread.
+    Called via tpool.execute to prevent eventlet greenthreads from
+    blocking while pyserial waits on a 1-second timeout read."""
+    lines = []
+    try:
+        waiting = s.in_waiting
+        for _ in range(min(waiting, 64)):
+            raw = s.readline()
+            if raw:
+                lines.append(raw)
+    except Exception:
+        return None
+    return lines
+
+
 def serial_reader():
     global ser, raw_buffer, plot_buffer
 
@@ -148,8 +167,16 @@ def serial_reader():
             continue
 
         try:
-            while active_ser.in_waiting > 0:
-                line = active_ser.readline().decode('utf-8', errors='ignore').strip()
+            raw_lines = eventlet.tpool.execute(_drain_serial, active_ser)
+            if raw_lines is None:
+                eventlet.sleep(0.1)
+                continue
+            if not raw_lines:
+                eventlet.sleep(0.01)
+                continue
+
+            for raw_line in raw_lines:
+                line = raw_line.decode('utf-8', errors='ignore').strip()
                 if not line:
                     continue
                 # Lines starting with '#' are ESP32 status/debug messages
@@ -190,6 +217,11 @@ def serial_reader():
                     if len(plot_buffer) > 600:
                         plot_buffer = plot_buffer[-600:]
                     plot_counter = 0
+
+                    state['wf_emit_ctr'] = state.get('wf_emit_ctr', 0) + 1
+                    if state['wf_emit_ctr'] >= 2:
+                        state['wf_emit_ctr'] = 0
+                        socketio.emit('waveform_update', {'waveform': [float(x) for x in plot_buffer[-200:]]})
 
                 # ── Feature extraction every FEATURE_WINDOW samples ──
                 feature_counter += 1
@@ -281,42 +313,25 @@ def serial_reader():
                         if np.std(t_vals) > 1:
                             from numpy import polyfit
                             slope, _ = polyfit(t_vals - t_vals[0], r_vals, 1)
-                            state['rms_slope'] = round(slope * 3600, 6)  # change per hour
-                            state['trend_alert'] = state['rms_slope'] > 0.0005
+                            state['rms_slope'] = float(round(slope * 3600, 6))  # numpy→Python float
+                            state['trend_alert'] = bool(state['rms_slope'] > 0.0005)  # numpy→Python bool
 
-                    # ── Auto-stop on sustained anomaly ──
-                    if state['evaluating'] and is_anomaly and state['motor'] > 0:
-                        state['anomaly_consecutive'] += 1
-                        if state['anomaly_consecutive'] >= state['auto_stop_threshold'] and not state['anomaly_auto_stopped']:
-                            state['anomaly_auto_stopped'] = True
-                            state['motor'] = 0
-                            state['status'] = '⚠ AUTO-STOP: Sustained anomaly detected — motor stopped'
-                            state['status_level'] = 'error'
-                            socketio.emit('status_update', {
-                                'status': state['status'],
-                                'level': 'error',
-                            })
-                            socketio.emit('motor_state', {'motor': 0, 'speed': 0, 'label': 'AUTO-STOP'})
-                    else:
-                        state['anomaly_consecutive'] = max(0, state['anomaly_consecutive'] - 1)
-                        if state['anomaly_consecutive'] == 0:
-                            state['anomaly_auto_stopped'] = False
+
 
                     # Emit real-time data to all clients
                     socketio.emit('sensor_data', {
-                        'waveform': plot_buffer[-200:],
                         'fft': fft_payload,
-                        'dominant_freq': round(dom_freq, 2),
-                        'rpm': round(rpm, 1),
+                        'dominant_freq': float(round(dom_freq, 2)),
+                        'rpm': float(round(rpm, 1)),
                         'is_anomaly': bool(is_anomaly),
-                        'anomaly_score': round(score * 100, 1),
-                        'rms': round(rms_val, 4),
-                        'rms_slope': state['rms_slope'],
-                        'trend_alert': state['trend_alert'],
-                        'evaluating': state['evaluating'],
-                        'training': state['training'],
-                        'company': state['company_name'],
-                        'company_identified': state['company_identified'],
+                        'anomaly_score': float(round(score * 100, 1)),
+                        'rms': float(round(rms_val, 4)),
+                        'rms_slope': float(state['rms_slope']),
+                        'trend_alert': bool(state['trend_alert']),
+                        'evaluating': bool(state['evaluating']),
+                        'training': bool(state['training']),
+                        'company': str(state['company_name']),
+                        'company_identified': bool(state['company_identified']),
                     })
 
         except Exception as e:
@@ -398,23 +413,44 @@ def connect_serial():
     port = data.get('port', state['serial_port'])
     baud = int(data.get('baud', state['baud_rate']))
 
+    # Close existing connection first
     with ser_lock:
         if ser and ser.is_open:
             ser.close()
-        try:
-            ser = serial.Serial(port, baud, timeout=0.01)
-            ser.flushInput()
-            state['serial_connected'] = True
-            state['serial_port'] = port
-            state['baud_rate'] = baud
-            state['baseline_ready'] = False
-            state['baseline_samples'] = []
-            state['baseline'] = None
-            state['status'] = 'CONNECTED — Calibrating baseline (hold motor still)…'
-            state['status_level'] = 'info'
-            return jsonify({'ok': True, 'port': port})
-        except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)}), 400
+
+    # Open serial in a REAL OS thread via tpool so eventlet's patched
+    # file I/O doesn't interfere with pyserial's tcsetattr ioctl calls
+    # (fixes errno 22 / EINVAL on macOS with monkey_patch active)
+    def _open_serial():
+        new_ser = serial.Serial(
+            port,
+            baud,
+            timeout=1,          # use 1s timeout — 0.01 triggers EINVAL on macOS
+            write_timeout=1,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+        )
+        new_ser.reset_input_buffer()
+        return new_ser
+
+    try:
+        new_ser = eventlet.tpool.execute(_open_serial)
+        with ser_lock:
+            ser = new_ser
+        state['serial_connected'] = True
+        state['serial_port'] = port
+        state['baud_rate'] = baud
+        state['baseline_ready'] = False
+        state['baseline_samples'] = []
+        state['baseline'] = None
+        state['company_identified'] = False
+        state['company_fingerprint_buffer'] = []
+        state['status'] = 'CONNECTED — Calibrating baseline (hold motor still)…'
+        state['status_level'] = 'info'
+        return jsonify({'ok': True, 'port': port})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
 
 
 @app.route('/api/disconnect', methods=['POST'])
@@ -547,39 +583,6 @@ def stop_evaluate():
     return jsonify({'ok': True})
 
 
-@app.route('/api/motor/control', methods=['POST'])
-def motor_control():
-    """Send motor command to ESP32 over serial."""
-    data = request.json
-    motor = int(data.get('motor', 0))   # 0=stop, 1=motor1, 2=motor2
-    speed = int(data.get('speed', state['motor_speed']))
-    speed = max(0, min(255, speed))
-
-    with ser_lock:
-        active_ser = ser
-
-    if active_ser is None or not active_ser.is_open:
-        return jsonify({'ok': False, 'error': 'Not connected'}), 400
-
-    # Build command string for ESP32
-    if motor == 1:
-        cmd = f'SPEED:{speed}\n1\n'
-        label = 'MOTOR 1'
-    elif motor == 2:
-        cmd = f'SPEED:{speed}\n2\n'
-        label = 'MOTOR 2'
-    else:
-        cmd = '0\n'
-        label = 'STOP'
-
-    try:
-        active_ser.write(cmd.encode('utf-8'))
-        state['motor'] = motor
-        state['motor_speed'] = speed
-        socketio.emit('motor_state', {'motor': motor, 'speed': speed, 'label': label})
-        return jsonify({'ok': True, 'motor': motor, 'speed': speed})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/status')
@@ -592,8 +595,6 @@ def get_status():
         'active_model': state['active_model_name'],
         'status': state['status'],
         'status_level': state['status_level'],
-        'motor': state['motor'],
-        'motor_speed': state['motor_speed'],
         'company_idx': state['company_idx'],
         'company_name': state['company_name'],
         'company_confidence': round(state['company_confidence'], 3),

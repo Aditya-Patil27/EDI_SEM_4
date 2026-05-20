@@ -16,7 +16,8 @@ def extract_features(data: list, baseline: float, fs: float = 100.0, n_fft: int 
       [8:18]  10 spectral sub-band energies  (from ml repo approach)
       [18:28] Frequency-domain stats + peaks (from motor_analyzer)
     """
-    arr = np.array(data, dtype=np.float64) - baseline
+    arr = np.array(data, dtype=np.float64)
+    arr = arr - np.mean(arr)  # Dynamic DC removal
 
     if len(arr) < 16 or np.std(arr) < 1e-10:
         return [0.0] * (8 + n_bands + 10)
@@ -28,7 +29,7 @@ def extract_features(data: list, baseline: float, fs: float = 100.0, n_fft: int 
     skewness = float(skew(arr))
     kurt = float(kurtosis(arr))
     crest = float(np.max(np.abs(arr)) / (rms + 1e-8))
-    shape_factor = rms / (np.mean(np.abs(arr)) + 1e-8)
+    shape_factor = float(rms / (np.mean(np.abs(arr)) + 1e-8))
     zcr = float(np.sum(np.diff(np.sign(arr)) != 0) / len(arr))
 
     # ── Frequency Domain ──
@@ -92,7 +93,8 @@ def extract_features(data: list, baseline: float, fs: float = 100.0, n_fft: int 
 def dominant_frequency(data: list, baseline: float, fs: float = 100.0) -> float:
     if len(data) < 8:
         return 0.0
-    arr = np.array(data, dtype=np.float64) - baseline
+    arr = np.array(data, dtype=np.float64)
+    arr = arr - np.mean(arr)  # Dynamic DC removal
     win = signal.windows.hann(len(arr))
     spectrum = np.abs(rfft(arr * win))
     freqs = rfftfreq(len(arr), d=1.0 / fs)
@@ -127,7 +129,8 @@ def order_domain(spectrum, freqs, rpm, max_order=10):
 def build_fft_payload(data: list, baseline: float, fs: float = 100.0) -> dict:
     if len(data) < 8:
         return {'freqs': [], 'magnitudes': [], 'dominant': 0.0}
-    arr = np.array(data, dtype=np.float64) - baseline
+    arr = np.array(data, dtype=np.float64)
+    arr = arr - np.mean(arr)  # Dynamic DC removal
     win = signal.windows.hann(len(arr))
     spectrum = np.abs(rfft(arr * win))
     freqs = rfftfreq(len(arr), d=1.0 / fs)

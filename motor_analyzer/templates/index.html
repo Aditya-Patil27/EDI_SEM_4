@@ -235,40 +235,7 @@
   <!-- ── Right Panel ── -->
   <aside class="right-panel">
 
-    <!-- Motor Control -->
-    <div class="panel-card motor-ctrl-card">
-      <div class="panel-card-header">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-        Motor Control
-      </div>
 
-      <div class="motor-btns">
-        <button class="btn motor-btn" id="motor1-btn" data-motor="1" disabled>
-          <span class="motor-indicator" id="motor1-dot"></span>
-          Motor 1
-        </button>
-        <button class="btn motor-btn stop-btn" id="motor-stop-btn" data-motor="0" disabled>
-          &#9632; Stop
-        </button>
-        <button class="btn motor-btn" id="motor2-btn" data-motor="2" disabled>
-          <span class="motor-indicator" id="motor2-dot"></span>
-          Motor 2
-        </button>
-      </div>
-
-      <div class="motor-status-row">
-        <span class="motor-status-label">Active:</span>
-        <span class="motor-active-badge" id="motor-active-badge">NONE</span>
-      </div>
-
-      <div class="form-row" style="margin-top:4px;">
-        <label class="form-label">Speed (PWM 0–255)</label>
-        <div class="slider-row">
-          <input type="range" id="motor-speed" min="0" max="255" value="200" class="slider" />
-          <span class="slider-val" id="motor-speed-val">200</span>
-        </div>
-      </div>
-    </div>
 
     <!-- Evaluate -->
     <div class="panel-card">

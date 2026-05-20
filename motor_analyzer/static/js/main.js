@@ -26,7 +26,9 @@ const waveformChart = new Chart(waveformCtx, {
       borderColor: '#00d4ff',
       borderWidth: 1.5,
       pointRadius: 0,
-      tension: 0.35,
+      tension: 0.5,
+      borderCapStyle: 'round',
+      borderJoinStyle: 'round',
       fill: true,
       backgroundColor: (ctx) => {
         const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
@@ -39,7 +41,7 @@ const waveformChart = new Chart(waveformCtx, {
   options: {
     responsive: true,
     maintainAspectRatio: false,
-    animation: false,
+    animation: { duration: 150, easing: 'linear' },
     interaction: { mode: 'none' },
     scales: {
       x: {
@@ -234,8 +236,6 @@ let appState = {
   evaluating: false,
   activeModel: null,
   isAnomaly: false,
-  motor: 0,          // 0=stopped, 1=motor1, 2=motor2
-  motorSpeed: 200,
   companyName: 'Unknown',
   companyIdentified: false,
   companyConfidence: 0,
@@ -407,8 +407,11 @@ function updateTrendChart(history, rms, slope) {
 // ─────────────────────────────────────────────────────────
 //  Socket Events
 // ─────────────────────────────────────────────────────────
+socket.on('waveform_update', (d) => {
+  updateWaveform(d.waveform, appState.isAnomaly && appState.evaluating);
+});
+
 socket.on('sensor_data', (d) => {
-  updateWaveform(d.waveform, d.is_anomaly && d.evaluating);
   updateFFT(d.fft);
 
   // Trend chart: save RMS point and update
@@ -493,10 +496,6 @@ socket.on('esp32_log', (d) => {
   log(`[ESP32] ${d.msg}`, 'info');
 });
 
-// Motor state broadcast
-socket.on('motor_state', (d) => {
-  updateMotorUI(d.motor, d.speed);
-});
 
 // ─────────────────────────────────────────────────────────
 //  Status helpers
@@ -527,9 +526,6 @@ function syncButtons() {
   const ready = appState.connected && appState.baselineReady;
   el.trainBtn.disabled     = !ready || appState.training;
   el.evalStartBtn.disabled = !ready || !appState.activeModel;
-  el.motor1Btn.disabled    = !appState.connected;
-  el.motorStopBtn.disabled = !appState.connected;
-  el.motor2Btn.disabled    = !appState.connected;
   updateReadinessUI();
 }
 
@@ -808,57 +804,6 @@ el.evalStopBtn.addEventListener('click', async () => {
 el.refreshModels.addEventListener('click', loadModels);
 
 // ─────────────────────────────────────────────────────────
-//  Motor Control
-// ─────────────────────────────────────────────────────────
-function updateMotorUI(motor, speed) {
-  appState.motor = motor;
-  appState.motorSpeed = speed;
-
-  // Button active states
-  el.motor1Btn.className    = 'btn motor-btn' + (motor === 1 ? ' active-motor-1' : '');
-  el.motorStopBtn.className = 'btn motor-btn stop-btn' + (motor === 0 ? ' active-stop' : '');
-  el.motor2Btn.className    = 'btn motor-btn' + (motor === 2 ? ' active-motor-2' : '');
-
-  // Badge
-  const labels = { 0: 'NONE', 1: 'MOTOR 1', 2: 'MOTOR 2' };
-  const cls    = { 0: '', 1: 'm1', 2: 'm2' };
-  el.motorActiveBadge.textContent = labels[motor] || 'NONE';
-  el.motorActiveBadge.className   = 'motor-active-badge ' + (cls[motor] || '');
-
-  // Sync speed slider if it differs
-  if (parseInt(el.motorSpeedSlider.value) !== speed) {
-    el.motorSpeedSlider.value = speed;
-    el.motorSpeedVal.textContent = speed;
-  }
-}
-
-async function sendMotorCmd(motor) {
-  const speed = parseInt(el.motorSpeedSlider.value);
-  const res = await api('/api/motor/control', { motor, speed });
-  if (res.ok) {
-    updateMotorUI(motor, speed);
-    const labels = { 0: 'All motors stopped', 1: `Motor 1 running (speed ${speed})`, 2: `Motor 2 running (speed ${speed})` };
-    log(labels[motor] || '', motor === 0 ? 'info' : 'success');
-  } else {
-    toast(res.error || 'Motor command failed', 'error');
-  }
-}
-
-el.motor1Btn.addEventListener('click',    () => sendMotorCmd(1));
-el.motorStopBtn.addEventListener('click', () => sendMotorCmd(0));
-el.motor2Btn.addEventListener('click',    () => sendMotorCmd(2));
-
-el.motorSpeedSlider.addEventListener('input', () => {
-  el.motorSpeedVal.textContent = el.motorSpeedSlider.value;
-});
-el.motorSpeedSlider.addEventListener('change', async () => {
-  // If a motor is already running, update its speed immediately
-  if (appState.motor > 0) {
-    await sendMotorCmd(appState.motor);
-  }
-});
-
-// ─────────────────────────────────────────────────────────
 //  Init
 // ─────────────────────────────────────────────────────────
 (async () => {
@@ -896,8 +841,6 @@ el.motorSpeedSlider.addEventListener('change', async () => {
   setStatus('IDLE — Connect a serial port to begin', 'info');
   log('MotorSense initialized', 'info');
 
-  // Restore motor state if server has it
-  if (status.motor !== undefined) updateMotorUI(status.motor, status.motor_speed || 200);
 
   // Load RMS trend from localStorage
   const savedTrend = loadTrendData()
