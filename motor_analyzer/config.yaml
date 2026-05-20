@@ -1,0 +1,110 @@
+project:
+  name: "MotorSense"
+  seed: 42
+
+# ─────────────────────────────────────────────────────────────
+#  Hardware — ESP32 + ADXL345 (deployed edge sensor)
+# ─────────────────────────────────────────────────────────────
+hardware:
+  platform: "ESP32"
+  mcu: "ESP32-WROOM-32"
+  cpu_freq_mhz: 240
+  sram_kb: 520
+  flash_mb: 4
+  sensor: "ADXL345"
+  sensor_range: "±16g"
+  sensor_internal_rate: "800 Hz"
+  sensor_interface: "I2C (SDA=21, SCL=22)"
+  serial_baud: 115200
+  motor_driver_pins:
+    motor1: { in1: 12, in2: 13, ena: 14 }
+    motor2: { in3: 25, in4: 26, enb: 27 }
+  pwm: { frequency: 30000, resolution: 8 }
+
+# ─────────────────────────────────────────────────────────────
+#  Streaming Pipeline (real-time inference on PC side)
+#  ESP32 streams 100 Hz raw Z-axis → PC extracts features
+# ─────────────────────────────────────────────────────────────
+streaming:
+  sample_rate: 100
+  window_size: 128
+  n_fft: 128
+  feature_dim: 28
+  spectral_bands: 10
+  downsample_factor: 3
+  plot_buffer_max: 600
+  inference:
+    confidence_threshold: 0.90
+    consensus_windows: 5
+
+# ─────────────────────────────────────────────────────────────
+#  Feature Extraction
+# ─────────────────────────────────────────────────────────────
+feature:
+  window_size: 128
+  sample_rate: 100
+  n_fft: 128
+  dimension: 28
+  spectral_bands: 10
+
+# ─────────────────────────────────────────────────────────────
+#  Company Fingerprinting
+# ─────────────────────────────────────────────────────────────
+companies:
+  classes:
+    - "Unknown"
+    - "CWRU"
+    - "JNU"
+    - "Synthetic"
+  fingerprint_samples: 512
+  use_synthetic: true
+
+# ─────────────────────────────────────────────────────────────
+#  Paths
+# ─────────────────────────────────────────────────────────────
+paths:
+  models_dir: "models"
+  company_models_dir: "models/companies"
+  cwru_data_dir: "data/raw/cwru"
+
+# ─────────────────────────────────────────────────────────────
+#  Training (company classifier + anomaly models)
+# ─────────────────────────────────────────────────────────────
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  patience: 10
+  company_noise_scale: 0.0
+
+# ─────────────────────────────────────────────────────────────
+#  CWRU Replay Bridge (dev only)
+# ─────────────────────────────────────────────────────────────
+replay:
+  target_fs: 100
+  chunk_size: 100
+  app_url: "http://127.0.0.1:5050"
+
+# ─────────────────────────────────────────────────────────────
+#  DEPRECATED — from separate audio ML repo (ml on GitHub)
+#  Pretrained CNN was trained on 39-dim audio MFCC features.
+#  NOT used by the ESP32 streaming pipeline (28-dim vibration).
+#  TransferLearningAdapter bridges 28→39 for expansion only.
+#  Kept for backward compat with train_pipeline.py --transfer
+# ─────────────────────────────────────────────────────────────
+pretrained:
+  deprecated: true
+  model_best: "legacy/models/pretrained/model_best.pth"
+  model_quantized: "legacy/models/pretrained/model_quantized.pth"
+  source: "ml_repo"
+  input_dim: 39
+  num_classes: 3
+  classes: ["Normal", "Unbalanced", "Bearing Fault"]
+  adapter:
+    adapt_dim: 28
+    enabled: false
+    fallback_to_sklearn: true
+  note: >
+    These weights are from a different feature space (39-dim audio MFCC).
+    TransferLearningAdapter wraps them with Linear(28,39) expansion.
+    For ESP32 deployment, sklearn RandomForest/IsolationForest is used instead.

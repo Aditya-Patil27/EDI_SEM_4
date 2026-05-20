@@ -1,0 +1,33 @@
+{
+  "project": "MotorSense",
+  "phase_numbering": "ordinal",
+  "phases": {
+    "phase-1": {
+      "slug": "3d-vui-dashboard",
+      "dir": ".planning/phase-1",
+      "title": "3D VUI Dashboard"
+    },
+    "phase-2": {
+      "slug": "anomaly-viz-alerts",
+      "dir": ".planning/phase-2",
+      "title": "Anomaly Visualization & Alerts"
+    },
+    "phase-3": {
+      "slug": "edge-deployment-firmware",
+      "dir": ".planning/phase-3",
+      "title": "Edge Deployment & Firmware"
+    },
+    "phase-4": {
+      "slug": "dashboard-polish",
+      "dir": ".planning/phase-4",
+      "title": "Dashboard Polish"
+    }
+  },
+  "paths": {
+    "templates": "motor_analyzer/templates",
+    "static": "motor_analyzer/static",
+    "flask_app": "motor_analyzer/app.py",
+    "ui_spec": "motor_analyzer/static/ui-spec/phase-1-vui-dashboard",
+    "3d_modules": "motor_analyzer/static/3d"
+  }
+}

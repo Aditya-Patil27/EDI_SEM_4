@@ -1,0 +1,66 @@
+# Technical Depth Script: TinyML Fault Classifier Architecture
+
+This document provides a comprehensive technical deep-dive into the TinyML Fault Classifier project. It outlines how the chosen technologies map to the project's operational requirements and breaks down the end-to-end machine learning pipeline working under the hood.
+
+---
+
+## 1. Architectural Mapping: Technology vs. Needs
+
+Our primary objective is to deploy a robust, highly accurate fault classification model onto edge devices (TinyML) with severely constrained compute and memory budgets, while maintaining interpretability and reliability. 
+
+| Operational Need | Technological Solution | Implementation Details |
+| :--- | :--- | :--- |
+| **Edge Compute Constraints** | **1D-CNN + Dynamic Quantization** | We bypass heavy 2D spectrogram models (like ResNet) in favor of a custom, highly parameterized (<12k parameters) 1D Convolutional Neural Network. We apply **PyTorch INT8 Dynamic Quantization** to reduce memory footprint and achieve <50ms CPU inference latency. |
+| **Data Discrepancy & Chaos** | **Adapter Pattern & DSP Pipeline** | Datasets come in different formats (WAV, CSV, Raw Binary) and sample rates. We use a polymorphic **Adapter Pattern** for ingestion, forcing all data into a standardized `manifest.json`, followed by strict Digital Signal Processing (DSP) normalization rules (8kHz target sampling). |
+| **Class Imbalance (Rare Faults)** | **SMOTE + Gaussian Noise Augmentation** | Hardware failures are rare. We implement Synthetic Minority Over-sampling Technique (**SMOTE**) combined with runtime Gaussian Noise augmentation to prevent the model from biasing toward the "Normal" majority class. |
+| **Trust & Compliance** | **SHAP XAI + Automated Audits** | Black-box models are risky in industrial IoT. We use **SHAP (SHapley Additive exPlanations)** to ensure decisions are based on mechanical physics (like vibration harmonics) rather than environmental artifacts (like 50Hz electrical mains hum). |
+| **False Alarm Reduction** | **GMM + Consensus Windows** | To prevent noise spikes from triggering false alarms, we run a tandem **Gaussian Mixture Model (GMM)** for broad anomaly screening, coupled with a 5-window consecutive consensus requirement via the CNN softmax output. |
+
+---
+
+## 2. In-Depth Pipeline Mechanics
+
+The backend pipeline ([pipeline.py](file:///c:/Users/app27/Downloads/ml/pipeline.py)) is rigidly separated into six independent, reproducible stages:
+
+### Stage 1: Data Ingestion ([data_ingestion.py](file:///c:/Users/app27/Downloads/ml/src/data_ingestion.py))
+- **Adapters Functionality**: The system ingests public databanks (MAFAULDA, NASA IMS Bearing, Unbalance Vibration). Each dataset has its own parsing logic. 
+- **Label Mapping**: Diverse terminologies (e.g., "healthy", "good", "imbalance") are aggressively mapped strictly to a 3-class taxonomy: `Normal`, `Unbalanced`, `Bearing Fault`. 
+- **Cryptographic Hashing**: Every ingested file is MD5-hashed to ensure data provenance and reproducibility tracking through a central `manifest.json`.
+
+### Stage 2: DSP & Preprocessing ([preprocessing.py](file:///c:/Users/app27/Downloads/ml/src/preprocessing.py))
+This is the most critical stage for edge efficiency. We do not pass raw audio to the neural network.
+1. **Resampling**: Polyphase resampling to a uniform **8000 Hz** (optimizing the Nyquist limit for mechanical faults usually found < 4000Hz).
+2. **Filtering**: DC Offset removal and a **4th-order Butterworth Bandpass Filter (50Hz - 3500Hz)**. 
+3. **Feature Extraction (Sliding Window)**: We chunk the continuous signal into 256-sample frames with 50% overlap. From each frame, we extract exactly **39 engineered features**:
+   - **3 Time-Domain Stats**: RMS (overall energy), Kurtosis (impact/shock presence), Crest Factor (peakiness).
+   - **10 Spectral Bands**: FFT energy bins to simulate BPFI/BPFO frequency mechanics.
+   - **26 Cepstral Coefficients**: 13 MFCCs + 13 Delta MFCCs (capturing the "texture" and temporal change of the vibration).
+
+### Stage 3: Model Architecture & Training ([train.py](file:///c:/Users/app27/Downloads/ml/src/train.py))
+The pipeline utilizes **PyTorch** tailored for GPU acceleration (RTX 3050 integration via [gpu_setup.py](file:///c:/Users/app27/Downloads/ml/src/gpu_setup.py)).
+- **Base Architecture**: A lightweight 1D-CNN [(Conv1D -> MaxPool -> Conv1D -> MaxPool -> Dense -> Dense)](file:///c:/Users/app27/Downloads/ml/pipeline.py#118-165).
+- **Training Flow**:
+  1. **Grouped Stratified Split**: Ensures contiguous data segments from the same machine don't bleed between train and test sets, preventing data leakage.
+  2. **Class Balancing**: SMOTE artificially generates rare fault vectors.
+  3. **Cosine Annealing Learning Rate**: Gradually decreases the Adam optimizer's learning rate for optimal loss landscape convergence.
+  4. **Early Stopping**: Halts training if validation loss doesn't improve for 10 epochs.
+
+### Stage 4: On-Device Moderation ([anomaly_detection.py](file:///c:/Users/app27/Downloads/ml/src/anomaly_detection.py) & [pipeline.py](file:///c:/Users/app27/Downloads/ml/pipeline.py))
+A CNN alone is too eager to classify. We implement a two-tier gatekeeping logic:
+1. **GMM Screening**: A Gaussian Mixture Model (trained **exclusively** on Normal data) calculates the log-likelihood of a new signal. If the signal drops below the 5th percentile of normal training scores, it is flagged as an anomaly.
+2. **Temporal Consensus**: Even if the CNN predicts a "Bearing Fault" with >90% confidence, the alert is suppressed until the prediction persists for exactly **5 consecutive sliding windows**. This drastically reduces False Positive Rates (FPR).
+
+### Stage 5: Edge Quantization ([quantization.py](file:///c:/Users/app27/Downloads/ml/src/quantization.py))
+Moving from standard floating-point 32-bit (FP32) modeling to INT8 to fit microcontroller constraints:
+- We leverage PyTorch's **Dynamic Quantization** targeting the heavier `nn.Linear` layers. 
+- Weights are collapsed from 32 bits to 8 bits, heavily reducing RAM requirements and multiplying inference speed on simple ARM/RISC-V edge processors.
+- A built-in latency profiler asserts the model executes in under 50ms per frame.
+
+### Stage 6: XAI Audit ([xai_audit.py](file:///c:/Users/app27/Downloads/ml/src/xai_audit.py))
+- We wrap the PyTorch CNN in a `shap.DeepExplainer`. 
+- **Security Check**: The module asserts which of the 39 features drives the predictions. If the highest attribution goes to `Band_0` (the 0-50Hz range), the pipeline structurally rejects the model. This is an automated safeguard acknowledging that 50Hz/60Hz is standard AC electrical line noise, which means the model has learned the electrical environment rather than mechanical physics. 
+
+---
+
+## 3. Summary
+This end-to-end framework maps heavy, chaotic industrial data into a sleek, optimized, explainable PyTorch artifact. By combining DSP-driven feature engineering, quantization, temporal moderation, and automated XAI audits, the pipeline directly satisfies the need for high-confidence, low-power predictive maintenance at the extreme edge.

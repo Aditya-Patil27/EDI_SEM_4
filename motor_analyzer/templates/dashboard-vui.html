@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MotorSense — 3D VUI Dashboard</title>
+  <meta name="description" content="3D Vibration User Interface for MotorSense predictive maintenance." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .vui-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .vui-full {
+      grid-column: 1 / -1;
+    }
+    .vui-panel {
+      background: var(--glass-bg, #1A1F2ECC);
+      border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+      border-radius: 12px;
+      padding: 12px;
+      position: relative;
+      min-height: 320px;
+    }
+    .vui-panel h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim, #6B7280);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .vui-canvas-wrap {
+      width: 100%;
+      height: 300px;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .vui-canvas-wrap canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .vui-return {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      background: var(--glass-bg, #1A1F2ECC);
+      border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+      border-radius: 8px;
+      color: var(--text-primary, #E8EDF5);
+      text-decoration: none;
+      font-size: 13px;
+      margin: 12px 16px 0;
+      transition: background 0.2s;
+    }
+    .vui-return:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    #gui-toggle {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 1000;
+      background: var(--glass-bg, #1A1F2ECC);
+      border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+      color: var(--text-primary, #E8EDF5);
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 12px;
+      backdrop-filter: blur(12px);
+    }
+    .dg.ac { z-index: 999 !important; }
+    @media (max-width: 1024px) {
+      .vui-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="brand-name">MotorSense</h1>
+      <p class="brand-sub">3D Vibration User Interface</p>
+    </div>
+  </div>
+  <div class="header-status">
+    <div class="status-pill" id="conn-pill">
+      <span class="status-dot" id="conn-dot"></span>
+      <span id="conn-text">Disconnected</span>
+    </div>
+  </div>
+</header>
+
+<a href="/" class="vui-return">&larr; Return to Dashboard</a>
+
+<div class="vui-layout">
+  <div class="vui-panel">
+    <h3>Radar — Spectral Overview</h3>
+    <div class="vui-canvas-wrap" id="radar3d-container"></div>
+  </div>
+
+  <div class="vui-panel">
+    <h3>Gauge — Instant RMS</h3>
+    <div class="vui-canvas-wrap" id="gauge3d-container" style="height:300px;display:flex;align-items:center;justify-content:center;"></div>
+  </div>
+
+  <div class="vui-panel vui-full">
+    <h3>Waterfall — Frequency Drift</h3>
+    <div class="vui-canvas-wrap" id="waterfall3d-container" style="height:360px;"></div>
+  </div>
+
+  <div class="vui-panel vui-full">
+    <h3>RMS Trend — 7 Days</h3>
+    <div style="height:120px;">
+      <canvas id="trend-chart"></canvas>
+    </div>
+    <div class="trend-meta" style="display:flex;gap:12px;padding:6px 0 0;font-size:11px;color:var(--text-dim,#6B7280);">
+      <span>Slope: <strong id="trend-slope">—</strong></span>
+      <span>Current RMS: <strong id="trend-current">—</strong></span>
+      <span>Data: <strong id="trend-count">0</strong> points</span>
+      <span id="trend-badge" style="display:none;font-size:11px;padding:2px 8px;border-radius:4px;"></span>
+    </div>
+  </div>
+</div>
+
+<button id="gui-toggle">Controls</button>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module" src="/static/3d/main.js"></script>
+<script>
+  const socket = io({ transports: ['websocket', 'polling'] })
+  const connPill = document.getElementById('conn-pill')
+  const connDot = document.getElementById('conn-dot')
+  const connText = document.getElementById('conn-text')
+
+  socket.on('connect', () => {
+    connPill.className = 'status-pill connected'
+    connDot.className = 'status-dot green'
+    connText.textContent = 'Connected'
+  })
+  socket.on('disconnect', () => {
+    connPill.className = 'status-pill'
+    connDot.className = 'status-dot'
+    connText.textContent = 'Disconnected'
+  })
+</script>
+</body>
+</html>

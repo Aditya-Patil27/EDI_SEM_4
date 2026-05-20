@@ -1,0 +1,70 @@
+# The Mathematics & Evaluation of the TinyML Fault Classifier
+
+When your project guide asks about the mathematics, they want to verify you understand *why* the code works, not just *how* to call libraries. This document breaks down the core math governing the digital signal processing (DSP) and the strict metrics used to evaluate the model.
+
+---
+
+## Part 1: The Mathematics Governing the Pipeline
+
+### 1. The Nyquist-Shannon Sampling Theorem (Data Ingestion)
+**The Formula:** `f_s ≥ 2 * f_max`
+- `f_s` is the sampling rate (8000 Hz in our pipeline).
+- `f_max` is the highest frequency of interest.
+**Why we use it:** To perfectly reconstruct a continuous mechanical vibration without "aliasing" (where high frequencies falsely appear as low frequencies), we must sample at twice the maximum mechanical frequency we care about. By selecting 8000 Hz, we guarantee mathematically perfect reconstruction of all mechanical faults residing under 4000 Hz (which covers 99% of bearing and gear mesh faults).
+
+### 2. Time-Domain Statistical Moments (Feature Extraction)
+Instead of feeding raw sine waves into the neural network, we calculate statistical moments of the sliding window array $x$ of length $N$ (where $N = 256$ samples).
+
+**A. Root Mean Square (RMS) - Overall Energy**
+$$ RMS = \sqrt{\frac{1}{N}\sum_{n=1}^{N} |x[n]|^2} $$
+**Why we use it:** RMS tracks the total energy of the vibration. High RMS mathematically proves a machine is vibrating violently (severe unbalance).
+
+**B. Kurtosis - Shock & Impact Detection**
+$$ Kurtosis = \frac{\frac{1}{N}\sum_{n=1}^{N} (x[n] - \bar{x})^4}{(\frac{1}{N}\sum_{n=1}^{N} (x[n] - \bar{x})^2)^2} $$
+**Why we use it:** Kurtosis measures the "tailedness" of the probability distribution. A normal machine has a Gaussian distribution (Kurtosis ≈ 3). When a bearing cracks, it causes sudden, sharp "spikes" in the vibration, massively increasing the Kurtosis equation's numerator (due to the 4th power).
+
+**C. Crest Factor - Peakiness**
+$$ Crest = \frac{|x_{peak}|}{RMS} $$
+**Why we use it:** Detects early-stage localized faults (like a single pit on a bearing race) before they generate enough energy to affect the overall RMS.
+
+### 3. Spectral Domain: Fast Fourier Transform (FFT)
+To analyze specific mechanical frequencies (like BPFI/BPFO), we map the time-domain array $x[n]$ to the frequency domain $X[k]$.
+$$ X[k] = \sum_{n=0}^{N-1} x[n] \cdot e^{-i 2\pi k n / N} $$
+**Why we use it:** A bearing fault happens at an exact, predictable frequency (e.g., 142 Hz). The FFT complex exponential mathematically isolates exactly how much energy exists at 142 Hz.
+
+### 4. Anomaly Screening: Gaussian Mixture Models (GMM)
+The GMM models the probability distribution of normal data as a weighted sum of $K$ Gaussian distributions.
+$$ P(x) = \sum_{k=1}^{K} \pi_k \mathcal{N}(x | \mu_k, \Sigma_k) $$
+Where $\pi_k$ is the mixing weight, $\mu_k$ is the mean, and $\Sigma_k$ is the covariance matrix.
+**Why we use it:** During inference, we calculate the log-likelihood of a new signal. If $log(P(x))$ falls below the bounds calculated during training, the mathematics dictate the sound did not come from the "Normal" distribution.
+
+---
+
+## Part 2: Evaluation Metrics (How we prove it works)
+
+Because industrial fault datasets are wildly imbalanced (e.g., millions of seconds of normal operation vs. 10 seconds of a machine breaking), standard "Accuracy" is a mathematically flawed metric. We evaluate using strict industrial metrics calculated in [pipeline.py](file:///c:/Users/app27/Downloads/ml/pipeline.py).
+
+### 1. Confusion Matrix Foundation
+All metrics derive from the Confusion Matrix:
+- **True Positive (TP):** We predicted a fault, and there was a fault.
+- **False Positive (FP) [Type I Error]:** We predicted a fault, but the machine was normal (False Alarm).
+- **True Negative (TN):** We predicted normal, and it was normal.
+- **False Negative (FN) [Type II Error]:** We predicted normal, but the machine was breaking (Catastrophic miss).
+
+### 2. The Primary Metric: Specificity (True Negative Rate)
+**Formula:** `Specificity = TN / (TN + FP)`
+**Why it is critical:** In a factory, False Alarms (FP) stop the production line and cost massive amounts of money. A high specificity (e.g., > 0.99) mathematically proves our model rarely causes false automated shutdowns. We enforce high specificity using the 5-window consensus logic.
+
+### 3. Target Metric: Macro-Averaged F1-Score
+**Formula:** 
+`Precision = TP / (TP + FP)`
+`Recall = TP / (TP + FN)`
+`F1 = 2 * (Precision * Recall) / (Precision + Recall)`
+**Why we use it:** F1-Score takes the Harmonic Mean of Precision and Recall. By taking the "Macro Average", we average the specific F1 scores for the `Normal`, `Bearing Fault`, and `Unbalanced` classes equally, regardless of how many audio samples exist for each. This proves the pipeline can actually detect the rare faults, not just guess "Normal" every time.
+
+### 4. Discriminative Power: ROC-AUC (Multi-Class One-vs-Rest)
+**Concept:** The Area Under the Receiver Operating Characteristic Curve.
+**Why we use it:** AUC plots the True Positive Rate against the False Positive Rate at every possible softmax probability threshold (from 0.00 to 1.00). An AUC of 1.0 means perfect mathematical separation between normal and broken machines. An AUC of 0.5 means the CNN is effectively flipping a coin. 
+
+### Presentation Tip for Evaluation
+When the guide asks about evaluation, specifically say: *"We do not rely on raw Accuracy. Because hardware failures are statistically rare, raw Accuracy is easily manipulated. We evaluated the architecture heavily on Normal-Class Specificity (to prevent factory False Alarms) and Macro-Averaged F1-Scores (to ensure minority fault classes weren't ignored)."*

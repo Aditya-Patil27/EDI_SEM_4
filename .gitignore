@@ -1,0 +1,38 @@
+# ── IDE / OS ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Python ──
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── Environment ──
+.env
+.env.local
+*.venv
+venv/
+.venv/
+ENV/
+env/
+
+# ── Project scope ──
+# All project logic is in motor_analyzer/ — the root holds only config

@@ -4,22 +4,30 @@ ESP32 + ADXL345 → Real-time FFT + ML anomaly detection
 """
 
 import os
+import sys
 import time
+import json
 import pickle
 import threading
+import yaml
 import serial
 import numpy as np
+from numpy import polyfit
 from scipy import signal
 from scipy.fft import rfft, rfftfreq
-from sklearn.ensemble import IsolationForest
-from sklearn.svm import OneClassSVM
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 import eventlet
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
+
+from feature_pipeline import extract_features, dominant_frequency, build_fft_payload, order_domain
+from ml_models import (
+    CompanyClassifier, EnsembleAnomalyModel,
+    GMMAnomalyDetector, AutoencoderAnomalyDetector,
+    PerCompanyModelRegistry,
+    TransferLearningAdapter, TORCH_AVAILABLE
+)
 
 # ─────────────────────────────────────────────────────────────
 #  App Setup
@@ -28,8 +36,28 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'motor_analyzer_secret_2024'
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
 
-MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, 'models')
+COMPANY_MODELS_DIR = os.path.join(MODELS_DIR, 'companies')
+CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
 os.makedirs(MODELS_DIR, exist_ok=True)
+os.makedirs(COMPANY_MODELS_DIR, exist_ok=True)
+
+# Load config
+try:
+    with open(CONFIG_PATH, 'r') as f:
+        APP_CONFIG = yaml.safe_load(f) or {}
+except Exception:
+    APP_CONFIG = {}
+
+COMPANY_CLASSES = APP_CONFIG.get('companies', {}).get('classes', ['Unknown'])
+FEATURE_DIM = APP_CONFIG.get('feature', {}).get('dimension', 28)
+NUM_COMPANIES = len(COMPANY_CLASSES)
+SAMPLE_RATE = APP_CONFIG.get('streaming', {}).get('sample_rate', 100)
+WINDOW_SIZE = APP_CONFIG.get('streaming', {}).get('window_size', 128)
+
+# Company-aware model registry
+company_registry = PerCompanyModelRegistry(models_dir=COMPANY_MODELS_DIR)
 
 # ─────────────────────────────────────────────────────────────
 #  Shared Application State
@@ -56,163 +84,48 @@ state = {
     'status_level': 'info',   # info | warning | error | success | training
     'motor': 0,               # 0=stopped, 1=motor1, 2=motor2
     'motor_speed': 200,       # PWM 0-255
+    'company_idx': 0,
+    'company_name': 'Unknown',
+    'company_confidence': 0.0,
+    'company_identified': False,
+    'company_fingerprint_buffer': [],
+
+    # ── Order tracking ──
+    'rpm': 0.0,
+    'order_spectrum': {},
+
+    # ── Degradation trending ──
+    'rms_history': [],              # (timestamp, rms) pairs for trending
+    'rms_slope': 0.0,               # slope of last 30min RMS (change/hour)
+    'trend_alert': False,           # True if RMS trending upward significantly
+
+    # ── Auto-stop (sustained anomaly) ──
+    'anomaly_consecutive': 0,       # consecutive anomaly windows
+    'anomaly_auto_stopped': False,  # True if motor was auto-stopped
+    'auto_stop_threshold': 30,      # windows before auto-stop (30 × ~1.28s ≈ 38s)
+
+    # ── Auto-encoder anomaly model ──
+    'autoencoder_model': None,
+    'use_autoencoder': False,
 }
 
 ser = None
 ser_lock = threading.Lock()
 
-# Rolling raw sample buffer for FFT
-RAW_WINDOW = 256          # samples used for FFT
-SAMPLE_RATE = 100         # approximate Hz from ESP32
+# Rolling raw sample buffers
+RAW_WINDOW = WINDOW_SIZE
 raw_buffer = []
-plot_buffer = []          # downsampled for waveform display
-
-# ─────────────────────────────────────────────────────────────
-#  Feature Engineering (Spectral + Temporal)
-# ─────────────────────────────────────────────────────────────
-def extract_features(data: list, baseline: float, fs: float = SAMPLE_RATE) -> list:
-    """
-    Comprehensive feature vector combining time-domain and frequency-domain.
-    Returns a 1D list of features.
-    """
-    arr = np.array(data, dtype=np.float64) - baseline
-
-    # --- Time Domain ---
-    rms = float(np.sqrt(np.mean(arr ** 2)))
-    p2p = float(np.ptp(arr))
-    variance = float(np.var(arr))
-    skewness = float(np.mean(((arr - arr.mean()) / (arr.std() + 1e-8)) ** 3))
-    kurtosis = float(np.mean(((arr - arr.mean()) / (arr.std() + 1e-8)) ** 4))
-    crest = float(np.max(np.abs(arr)) / (rms + 1e-8))
-    shape_factor = rms / (np.mean(np.abs(arr)) + 1e-8)
-    zcr = float(np.sum(np.diff(np.sign(arr)) != 0) / len(arr))
-
-    # --- Frequency Domain (FFT) ---
-    win = signal.windows.hann(len(arr))
-    spectrum = np.abs(rfft(arr * win))
-    freqs = rfftfreq(len(arr), d=1.0 / fs)
-
-    # Dominant frequency
-    dom_idx = int(np.argmax(spectrum[1:])) + 1   # skip DC
-    dom_freq = float(freqs[dom_idx])
-
-    # Spectral centroid
-    spec_sum = spectrum.sum() + 1e-8
-    centroid = float(np.sum(freqs * spectrum) / spec_sum)
-
-    # Spectral spread
-    spread = float(np.sqrt(np.sum(((freqs - centroid) ** 2) * spectrum) / spec_sum))
-
-    # Spectral flatness (Wiener entropy)
-    geo_mean = np.exp(np.mean(np.log(spectrum + 1e-8)))
-    arith_mean = np.mean(spectrum) + 1e-8
-    flatness = float(geo_mean / arith_mean)
-
-    # Band energy ratios (low/mid/high)
-    low_mask  = freqs < fs * 0.1
-    mid_mask  = (freqs >= fs * 0.1) & (freqs < fs * 0.3)
-    high_mask = freqs >= fs * 0.3
-    total_e = np.sum(spectrum ** 2) + 1e-8
-    e_low  = float(np.sum(spectrum[low_mask]  ** 2) / total_e)
-    e_mid  = float(np.sum(spectrum[mid_mask]  ** 2) / total_e)
-    e_high = float(np.sum(spectrum[high_mask] ** 2) / total_e)
-
-    # Top-3 spectral peaks
-    sorted_idx = np.argsort(spectrum)[::-1]
-    peak_freqs = [float(freqs[i]) for i in sorted_idx[:3]]
-
-    return [
-        rms, p2p, variance, skewness, kurtosis, crest, shape_factor, zcr,
-        dom_freq, centroid, spread, flatness,
-        e_low, e_mid, e_high,
-        *peak_freqs,
-    ]
-
-
-def dominant_frequency_from_buffer(data: list, baseline: float, fs: float = SAMPLE_RATE) -> float:
-    if len(data) < 8:
-        return 0.0
-    arr = np.array(data, dtype=np.float64) - baseline
-    win = signal.windows.hann(len(arr))
-    spectrum = np.abs(rfft(arr * win))
-    freqs = rfftfreq(len(arr), d=1.0 / fs)
-    dom_idx = int(np.argmax(spectrum[1:])) + 1
-    return float(freqs[dom_idx])
-
-
-def build_fft_payload(data: list, baseline: float, fs: float = SAMPLE_RATE) -> dict:
-    """Build FFT magnitude array for frontend chart."""
-    if len(data) < 8:
-        return {'freqs': [], 'magnitudes': [], 'dominant': 0.0}
-    arr = np.array(data, dtype=np.float64) - baseline
-    win = signal.windows.hann(len(arr))
-    spectrum = np.abs(rfft(arr * win))
-    freqs = rfftfreq(len(arr), d=1.0 / fs)
-    dom_idx = int(np.argmax(spectrum[1:])) + 1
-    return {
-        'freqs': freqs.tolist(),
-        'magnitudes': (spectrum / (spectrum.max() + 1e-8)).tolist(),  # normalised
-        'dominant': float(freqs[dom_idx]),
-    }
-
+plot_buffer = []
 
 # ─────────────────────────────────────────────────────────────
 #  ML Model Builder
 # ─────────────────────────────────────────────────────────────
 def build_model(model_type: str = 'ensemble'):
-    """
-    Returns an sklearn Pipeline with scaler + chosen anomaly detector.
-    'ensemble' = stacked IsolationForest + OC-SVM vote (best for vibration).
-    """
-    if model_type == 'isoforest':
-        clf = IsolationForest(n_estimators=300, contamination=0.03, random_state=42)
-    elif model_type == 'ocsvm':
-        clf = OneClassSVM(kernel='rbf', nu=0.05, gamma='scale')
-    else:  # ensemble — we train both and combine
-        clf = None   # handled in fit_model
-    scaler = StandardScaler()
-    if clf is not None:
-        return Pipeline([('scaler', scaler), ('clf', clf)])
-    return None
-
-
-class EnsembleModel:
-    """
-    Trains IsolationForest + OC-SVM.  Anomaly if *both* agree → fewer false alarms.
-    Anomaly score is mean of both normalised scores.
-    """
-    def __init__(self):
-        self.if_pipe = Pipeline([
-            ('scaler', StandardScaler()),
-            ('clf', IsolationForest(n_estimators=300, contamination=0.03, random_state=42))
-        ])
-        self.svm_pipe = Pipeline([
-            ('scaler', StandardScaler()),
-            ('clf', OneClassSVM(kernel='rbf', nu=0.05, gamma='scale'))
-        ])
-        self.trained = False
-
-    def fit(self, X):
-        X = np.array(X)
-        self.if_pipe.fit(X)
-        self.svm_pipe.fit(X)
-        self.trained = True
-
-    def predict_score(self, x):
-        """Returns (is_anomaly: bool, score: float 0-1)."""
-        x = np.array(x).reshape(1, -1)
-        if_pred  = self.if_pipe.predict(x)[0]          # +1 or -1
-        if_score = -self.if_pipe.score_samples(x)[0]   # higher = more anomalous
-
-        svm_pred  = self.svm_pipe.predict(x)[0]
-        svm_score = -self.svm_pipe.score_samples(x)[0]
-
-        # Normalise scores to 0-1 using sigmoid-ish
-        def normalise(s): return float(1 / (1 + np.exp(-s + 1.5)))
-
-        combined = (normalise(if_score) + normalise(svm_score)) / 2.0
-        is_anomaly = (if_pred == -1) and (svm_pred == -1)
-        return is_anomaly, combined
+    if model_type == 'gmm':
+        return GMMAnomalyDetector()
+    if model_type == 'autoencoder':
+        return AutoencoderAnomalyDetector()
+    return EnsembleAnomalyModel()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -224,7 +137,7 @@ def serial_reader():
     DOWNSAMPLE = 3
     plot_counter = 0
     feature_counter = 0
-    FEATURE_WINDOW = 128
+    FEATURE_WINDOW = WINDOW_SIZE
 
     while True:
         with ser_lock:
@@ -284,10 +197,51 @@ def serial_reader():
                     feature_counter = 0
                     chunk = raw_buffer[-FEATURE_WINDOW:]
                     feats = extract_features(chunk, baseline, SAMPLE_RATE)
-                    dom_freq = feats[8]   # dominant frequency index
+                    dom_freq = dominant_frequency(chunk, baseline, SAMPLE_RATE)
 
                     fft_payload = build_fft_payload(chunk, baseline, SAMPLE_RATE)
                     state['dominant_freq'] = dom_freq
+
+                    # ── Order tracking (RPM normalization) ──
+                    rpm = dom_freq * 60.0  # convert Hz to RPM
+                    state['rpm'] = round(rpm, 1)
+                    arr = np.array(chunk, dtype=np.float64) - baseline
+                    win = signal.windows.hann(len(arr))
+                    raw_spec = np.abs(rfft(arr * win))
+                    raw_freqs = rfftfreq(len(arr), d=1.0 / SAMPLE_RATE)
+                    if rpm > 1:
+                        state['order_spectrum'] = order_domain(raw_spec, raw_freqs, rpm)
+
+                    # ── Company fingerprinting (first N samples) ──
+                    if not state['company_identified']:
+                        state['company_fingerprint_buffer'].append(feats)
+                        fp_needed = APP_CONFIG.get('companies', {}).get('fingerprint_samples', 512) // FEATURE_WINDOW
+                        if len(state['company_fingerprint_buffer']) >= fp_needed:
+                            fp_arr = np.array(state['company_fingerprint_buffer'])
+                            avg_feat = np.mean(fp_arr, axis=0)
+                            idx, name, conf = company_registry.identify_company(avg_feat)
+                            state['company_idx'] = idx
+                            state['company_name'] = name
+                            state['company_confidence'] = conf
+                            state['company_identified'] = True
+                            state['status'] = f'COMPANY IDENTIFIED: {name} ({conf:.0%} confidence)'
+                            state['status_level'] = 'success' if conf > 0.5 else 'warning'
+                            socketio.emit('company_identified', {
+                                'company': name,
+                                'confidence': round(conf, 3),
+                                'idx': idx,
+                            })
+                            # Load company-specific anomaly model if available
+                            company_model = company_registry.get_anomaly_model(name)
+                            if company_model is not None:
+                                state['current_model_obj'] = company_model
+                                state['active_model_name'] = f"{name}_model"
+                                state['evaluating'] = True
+                                state['status'] += f' + loaded {name} anomaly model'
+                            socketio.emit('status_update', {
+                                'status': state['status'],
+                                'level': state['status_level'],
+                            })
 
                     is_anomaly = False
                     score = 0.0
@@ -297,7 +251,6 @@ def serial_reader():
                         elapsed = time.time() - state['train_start']
                         progress = min(elapsed / state['train_duration'], 1.0)
                         if elapsed >= state['train_duration']:
-                            # Auto-complete training
                             _finish_training_internal()
                         else:
                             socketio.emit('train_progress', {
@@ -313,15 +266,57 @@ def serial_reader():
                         state['is_anomaly'] = bool(is_anomaly)
                         state['anomaly_score'] = float(score)
 
+                    # ── Degradation trending (RMS over time) ──
+                    rms_val = float(np.sqrt(np.mean(arr ** 2)))
+                    now = time.time()
+                    state['rms_history'].append((now, rms_val))
+                    # Keep last 2 hours of data
+                    cutoff = now - 7200
+                    state['rms_history'] = [(t, v) for t, v in state['rms_history'] if t > cutoff]
+                    # Compute slope over last 30 minutes if enough data
+                    recent = [(t, v) for t, v in state['rms_history'] if t > now - 1800]
+                    if len(recent) >= 10:
+                        t_vals = np.array([r[0] for r in recent])
+                        r_vals = np.array([r[1] for r in recent])
+                        if np.std(t_vals) > 1:
+                            from numpy import polyfit
+                            slope, _ = polyfit(t_vals - t_vals[0], r_vals, 1)
+                            state['rms_slope'] = round(slope * 3600, 6)  # change per hour
+                            state['trend_alert'] = state['rms_slope'] > 0.0005
+
+                    # ── Auto-stop on sustained anomaly ──
+                    if state['evaluating'] and is_anomaly and state['motor'] > 0:
+                        state['anomaly_consecutive'] += 1
+                        if state['anomaly_consecutive'] >= state['auto_stop_threshold'] and not state['anomaly_auto_stopped']:
+                            state['anomaly_auto_stopped'] = True
+                            state['motor'] = 0
+                            state['status'] = '⚠ AUTO-STOP: Sustained anomaly detected — motor stopped'
+                            state['status_level'] = 'error'
+                            socketio.emit('status_update', {
+                                'status': state['status'],
+                                'level': 'error',
+                            })
+                            socketio.emit('motor_state', {'motor': 0, 'speed': 0, 'label': 'AUTO-STOP'})
+                    else:
+                        state['anomaly_consecutive'] = max(0, state['anomaly_consecutive'] - 1)
+                        if state['anomaly_consecutive'] == 0:
+                            state['anomaly_auto_stopped'] = False
+
                     # Emit real-time data to all clients
                     socketio.emit('sensor_data', {
                         'waveform': plot_buffer[-200:],
                         'fft': fft_payload,
                         'dominant_freq': round(dom_freq, 2),
+                        'rpm': round(rpm, 1),
                         'is_anomaly': bool(is_anomaly),
                         'anomaly_score': round(score * 100, 1),
+                        'rms': round(rms_val, 4),
+                        'rms_slope': state['rms_slope'],
+                        'trend_alert': state['trend_alert'],
                         'evaluating': state['evaluating'],
                         'training': state['training'],
+                        'company': state['company_name'],
+                        'company_identified': state['company_identified'],
                     })
 
         except Exception as e:
@@ -343,21 +338,36 @@ def _finish_training_internal():
         return
 
     pending_name = state.get('pending_model_name', 'model')
-    model_obj = EnsembleModel()
+
+    # Train ensemble model (IF + SVM)
+    model_obj = EnsembleAnomalyModel()
     model_obj.fit(state['training_features'])
+
+    # Train auto-encoder model
+    ae_model = AutoencoderAnomalyDetector()
+    ae_model.fit(state['training_features'])
+    state['autoencoder_model'] = ae_model
+    state['use_autoencoder'] = True
 
     state['current_model_obj'] = model_obj
     state['active_model_name'] = pending_name
     state['training'] = False
     state['evaluating'] = True
-    state['status'] = f'MODEL "{pending_name}" TRAINED ✓ — Inference active'
+
+    # Save as per-company model if company is identified
+    company = state.get('company_name', 'Unknown')
+    if company != 'Unknown':
+        company_registry.train_company_model(company, state['training_features'])
+        state['status'] = f'COMPANY MODEL "{company}/{pending_name}" TRAINED ✓'
+    else:
+        state['status'] = f'MODEL "{pending_name}" TRAINED ✓ — Inference active'
     state['status_level'] = 'success'
 
     socketio.emit('status_update', {
         'status': state['status'],
         'level': state['status_level'],
     })
-    socketio.emit('train_complete', {'model_name': pending_name})
+    socketio.emit('train_complete', {'model_name': pending_name, 'company': company})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -366,6 +376,11 @@ def _finish_training_internal():
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/vui')
+def vui_dashboard():
+    return render_template('dashboard-vui.html')
 
 
 @app.route('/api/ports')
@@ -579,6 +594,295 @@ def get_status():
         'status_level': state['status_level'],
         'motor': state['motor'],
         'motor_speed': state['motor_speed'],
+        'company_idx': state['company_idx'],
+        'company_name': state['company_name'],
+        'company_confidence': round(state['company_confidence'], 3),
+        'company_identified': state['company_identified'],
+        'feature_dim': FEATURE_DIM,
+        'available_companies': COMPANY_CLASSES,
+        'rpm': state['rpm'],
+        'rms_slope': state['rms_slope'],
+        'trend_alert': state['trend_alert'],
+        'anomaly_auto_stopped': state['anomaly_auto_stopped'],
+        'anomaly_consecutive': state['anomaly_consecutive'],
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Company Awareness API
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/company/status')
+def get_company_status():
+    """Get current company info and available per-company models."""
+    available = []
+    for f in os.listdir(COMPANY_MODELS_DIR):
+        if f.endswith('.pkl'):
+            available.append(f[:-4])
+    return jsonify({
+        'current_company': state['company_name'],
+        'identified': state['company_identified'],
+        'confidence': round(state['company_confidence'], 3),
+        'available_companies': available,
+        'registered_companies': company_registry.company_names,
+    })
+
+
+@app.route('/api/company/reidentify', methods=['POST'])
+def reidentify_company():
+    """Force re-identification of the connected machine."""
+    state['company_identified'] = False
+    state['company_name'] = 'Unknown'
+    state['company_idx'] = 0
+    state['company_confidence'] = 0.0
+    state['company_fingerprint_buffer'] = []
+    state['status'] = 'Re-identifying company…'
+    state['status_level'] = 'info'
+    socketio.emit('status_update', {'status': state['status'], 'level': state['status_level']})
+    return jsonify({'ok': True})
+
+
+@app.route('/api/company/models')
+def list_company_models():
+    """List all per-company anomaly models saved."""
+    models = []
+    for f in os.listdir(COMPANY_MODELS_DIR):
+        if f.endswith('.pkl'):
+            path = os.path.join(COMPANY_MODELS_DIR, f)
+            mtime = os.path.getmtime(path)
+            models.append({
+                'company': f[:-4],
+                'modified': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime)),
+            })
+    return jsonify(models)
+
+
+@app.route('/api/company/classifier/status')
+def classifier_status():
+    """Check if a company classifier has been trained and loaded."""
+    return jsonify({
+        'trained': company_registry.company_classifier.trained,
+        'num_companies': company_registry.company_classifier.num_companies,
+        'company_names': company_registry.company_names,
+        'feature_dim': company_registry.company_classifier.feature_dim,
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Pretrained Weights API (from ml repo)
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/pretrained/info')
+def pretrained_info():
+    """Info about pretrained .pth weights + transfer adapter status."""
+    pt_config = APP_CONFIG.get('pretrained', {})
+    adapter_cfg = pt_config.get('adapter', {})
+
+    transfer_model_path = os.path.join(MODELS_DIR, 'company_classifier_transfer.pth')
+    transfer_available = os.path.exists(transfer_model_path)
+    if transfer_available:
+        adapter = TransferLearningAdapter.load(transfer_model_path)
+        transfer_status = {
+            'trained': adapter.trained,
+            'classes': adapter.class_names,
+        }
+    else:
+        transfer_status = {'trained': False}
+
+    result = {
+        'available': False,
+        'files': [],
+        'source': pt_config.get('source', ''),
+        'input_dim': pt_config.get('input_dim', 39),
+        'num_classes': pt_config.get('num_classes', 3),
+        'classes': pt_config.get('classes', []),
+        'adapter': {
+            'enabled': adapter_cfg.get('enabled', True),
+            'adapt_dim': adapter_cfg.get('adapt_dim', 28),
+            'fallback_to_sklearn': adapter_cfg.get('fallback_to_sklearn', True),
+        },
+        'transfer_model': transfer_status,
+        'note': 'Pretrained weights (39-dim audio) -> TransferLearningAdapter (28-dim vibration) '
+                'via Linear(28,39) expansion layer.',
+    }
+    for key in ['model_best', 'model_quantized']:
+        path = pt_config.get(key, '')
+        full = os.path.join(BASE_DIR, path)
+        if os.path.exists(full):
+            size_kb = round(os.path.getsize(full) / 1024, 1)
+            result['files'].append({
+                'name': key,
+                'filename': path,
+                'size_kb': size_kb,
+            })
+            result['available'] = True
+    return jsonify(result)
+
+
+@app.route('/api/pretrained/weights')
+def pretrained_weights_summary():
+    """Check if pretrained .pth files exist and their metadata."""
+    pt_config = APP_CONFIG.get('pretrained', {})
+    files_found = []
+    for key in ['model_best', 'model_quantized']:
+        path = pt_config.get(key, '')
+        full = os.path.join(BASE_DIR, path)
+        if os.path.exists(full):
+            files_found.append({
+                'key': key,
+                'path': path,
+                'size': os.path.getsize(full),
+            })
+    return jsonify({
+        'count': len(files_found),
+        'files': files_found,
+        'can_use_directly': False,
+        'reason': 'Pretrained weights are from audio MFCC pipeline (39-dim). '
+                  'Current app uses 28-dim vibration features. Retraining needed.',
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Dataset Replay Injection (for cwru_replay.py)
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/inject', methods=['POST'])
+def inject_samples():
+    """Direct buffer injection for CWRU replay bridge (dev only)."""
+    global raw_buffer, plot_buffer
+    try:
+        data = request.get_json()
+    except Exception:
+        return jsonify({'ok': False, 'error': 'invalid JSON'}), 400
+    vals = data.get('samples', [])
+    if not vals:
+        return jsonify({'ok': True, 'injected': 0})
+
+    if not state['baseline_ready']:
+        state['baseline_samples'].extend(vals)
+        if len(state['baseline_samples']) >= 80:
+            state['baseline'] = float(np.mean(state['baseline_samples'][:80]))
+            state['baseline_ready'] = True
+            state['status'] = 'BASELINE LOCKED (replay) ✓'
+            state['status_level'] = 'success'
+            socketio.emit('status_update', {
+                'status': state['status'],
+                'level': state['status_level'],
+                'baseline': state['baseline'],
+            })
+
+    raw_buffer.extend(vals)
+    if len(raw_buffer) > RAW_WINDOW * 4:
+        raw_buffer = raw_buffer[-RAW_WINDOW * 2:]
+
+    baseline = state.get('baseline', float(np.mean(vals)))
+    plot_buffer.extend([round(v - baseline, 4) for v in vals])
+    if len(plot_buffer) > 600:
+        plot_buffer = plot_buffer[-600:]
+
+    return jsonify({'ok': True, 'injected': len(vals)})
+
+
+# ─────────────────────────────────────────────────────────────
+#  Evaluation & Testing API
+# ─────────────────────────────────────────────────────────────
+EVAL_REPORT_PATH = os.path.join(BASE_DIR, 'evaluation_report.json')
+
+@app.route('/api/evaluate/report')
+def get_eval_report():
+    """Return the latest evaluation report (model card)."""
+    if os.path.exists(EVAL_REPORT_PATH):
+        with open(EVAL_REPORT_PATH, 'r') as f:
+            return jsonify(json.load(f))
+    return jsonify({'error': 'No evaluation report found. Run evaluate_pipeline.py first.'}), 404
+
+
+@app.route('/api/evaluate/run', methods=['POST'])
+def run_evaluation():
+    """Trigger evaluation pipeline in a subprocess."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [sys.executable, 'evaluate_pipeline.py', '--quick'],
+            capture_output=True, text=True, timeout=120, cwd=BASE_DIR
+        )
+        if os.path.exists(EVAL_REPORT_PATH):
+            with open(EVAL_REPORT_PATH, 'r') as f:
+                report = json.load(f)
+            return jsonify({
+                'ok': True,
+                'verdict': report.get('verdict', 'UNKNOWN'),
+                'report': report,
+                'log': result.stdout[-2000:] if result.stdout else '',
+            })
+        else:
+            return jsonify({'ok': False, 'error': result.stderr[-1000:]}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/evaluate/synthetic', methods=['POST'])
+def generate_eval_data():
+    """Generate synthetic vibration dataset for testing."""
+    try:
+        from generate_synthetic_data import save_synthetic_dataset
+        save_path = save_synthetic_dataset()
+        return jsonify({'ok': True, 'path': save_path})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/evaluate/run-tests', methods=['POST'])
+def run_unit_tests():
+    """Run pytest suite and return results."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [sys.executable, '-m', 'pytest', 'tests/', '-v', '--tb=short'],
+            capture_output=True, text=True, timeout=120, cwd=BASE_DIR
+        )
+        lines = result.stdout.split('\n')
+        passed = sum(1 for l in lines if 'PASSED' in l)
+        failed = sum(1 for l in lines if 'FAILED' in l)
+        return jsonify({
+            'ok': result.returncode == 0,
+            'passed': passed,
+            'failed': failed,
+            'summary': lines[-3:] if result.stdout else [],
+            'output': result.stdout[-3000:],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
+#  3D VUI Dashboard API
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/vibration/current')
+def vibration_current():
+    """Return latest RMS, FFT array, and spectral bands for 3D VUI."""
+    raw = plot_buffer[-128:] if plot_buffer else []
+    rms = float(np.sqrt(np.mean(np.square(raw)))) * 3 if raw else 0.0
+    return jsonify({
+        'rms': round(rms, 4),
+        'dominant_freq': round(state['dominant_freq'], 2),
+        'anomaly_score': round(state['anomaly_score'] * 100, 1),
+        'is_anomaly': state['is_anomaly'],
+        'rpm': state['rpm'],
+        'rms_slope': state['rms_slope'],
+        'trend_alert': state['trend_alert'],
+        'fft': [],
+        'spectral': [],
+    })
+
+
+@app.route('/api/trend')
+def trend_data():
+    """Return RMS history for 7-day trend chart."""
+    history = state['rms_history']
+    if not history:
+        return jsonify({'timestamps': [], 'values': [], 'slope': 0})
+    return jsonify({
+        'timestamps': [int(t) for t, _ in history],
+        'values': [round(v, 4) for _, v in history],
+        'slope': state['rms_slope'],
     })
 
 
@@ -599,5 +903,5 @@ def on_connect():
 if __name__ == '__main__':
     reader_thread = threading.Thread(target=serial_reader, daemon=True)
     reader_thread.start()
-    print("🚀  Motor Analyzer running → http://127.0.0.1:5050")
+    print("Motor Analyzer running -> http://127.0.0.1:5050")
     socketio.run(app, host='0.0.0.0', port=5050, debug=False)
