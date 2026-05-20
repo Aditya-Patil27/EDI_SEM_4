@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css" />
   <style>
@@ -125,6 +127,19 @@
   <div class="vui-panel vui-full">
     <h3>Waterfall — Frequency Drift</h3>
     <div class="vui-canvas-wrap" id="waterfall3d-container" style="height:360px;"></div>
+  </div>
+
+  <div class="vui-panel vui-full">
+    <h3>RMS Trend — 7 Days</h3>
+    <div style="height:120px;">
+      <canvas id="trend-chart"></canvas>
+    </div>
+    <div class="trend-meta" style="display:flex;gap:12px;padding:6px 0 0;font-size:11px;color:var(--text-dim,#6B7280);">
+      <span>Slope: <strong id="trend-slope">—</strong></span>
+      <span>Current RMS: <strong id="trend-current">—</strong></span>
+      <span>Data: <strong id="trend-count">0</strong> points</span>
+      <span id="trend-badge" style="display:none;font-size:11px;padding:2px 8px;border-radius:4px;"></span>
+    </div>
   </div>
 </div>
 

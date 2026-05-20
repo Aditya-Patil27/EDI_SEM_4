@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
@@ -295,6 +296,23 @@
 
       <div id="models-list" class="models-list">
         <div class="empty-state">No saved models yet.<br/>Train one to get started.</div>
+      </div>
+    </div>
+
+    <!-- RMS Trend -->
+    <div class="panel-card">
+      <div class="panel-card-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        RMS Trend
+        <span class="trend-badge" id="trend-badge" style="display:none;margin-left:auto;font-size:11px;padding:2px 8px;border-radius:4px;"></span>
+      </div>
+      <div class="chart-wrap" style="height:80px;">
+        <canvas id="trend-chart"></canvas>
+      </div>
+      <div class="trend-meta" style="display:flex;gap:12px;padding:6px 0 0;font-size:11px;color:var(--text-dim,#6B7280);">
+        <span>Slope: <strong id="trend-slope">—</strong></span>
+        <span>Current RMS: <strong id="trend-current">—</strong></span>
+        <span>Data: <strong id="trend-count">0</strong> points</span>
       </div>
     </div>
 

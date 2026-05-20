@@ -276,11 +276,147 @@ function updateFFT(fftPayload) {
 }
 
 // ─────────────────────────────────────────────────────────
+//  RMS Trend Chart (7-day localStorage)
+// ─────────────────────────────────────────────────────────
+const TREND_KEY = 'motorsense_rms_trend'
+const TREND_MAX_POINTS = 10080  // 7 days × 1440 min, 1 sample per min
+
+function loadTrendData() {
+  try {
+    const raw = localStorage.getItem(TREND_KEY)
+    if (!raw) return []
+    const data = JSON.parse(raw)
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+    return data.filter(p => p.t > cutoff)
+  } catch { return [] }
+}
+
+function saveTrendPoint(rms) {
+  let data = loadTrendData()
+  data.push({ t: Date.now(), v: rms })
+  // Keep at most one point per 30s to avoid bloat
+  if (data.length > 1) {
+    const last = data[data.length - 2]
+    if (data[data.length - 1].t - last.t < 30000) {
+      data[data.length - 2] = data[data.length - 1]
+      data.pop()
+    }
+  }
+  if (data.length > TREND_MAX_POINTS) data = data.slice(-TREND_MAX_POINTS)
+  localStorage.setItem(TREND_KEY, JSON.stringify(data))
+  return data
+}
+
+const trendCanvas = document.getElementById('trend-chart')
+let trendChart = null
+if (trendCanvas) {
+  const ctx = trendCanvas.getContext('2d')
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        borderColor: '#00D4AA',
+        borderWidth: 1.2,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: true,
+        backgroundColor: (ctx) => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height)
+          g.addColorStop(0, 'rgba(0,212,170,0.15)')
+          g.addColorStop(1, 'rgba(0,212,170,0)')
+          return g
+        },
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
+          display: true,
+          grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false },
+          ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 6 },
+          border: { display: false },
+        },
+        y: {
+          display: true,
+          grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false },
+          ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 4 },
+          border: { display: false },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(13,18,32,0.95)',
+          borderColor: 'rgba(0,212,170,0.3)',
+          borderWidth: 1,
+          bodyColor: '#E8EDF5',
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x).toLocaleString(),
+            label: (item) => `RMS: ${item.parsed.y.toFixed(4)}`,
+          },
+        },
+      },
+    },
+  })
+}
+
+function updateTrendChart(history, rms, slope) {
+  if (!trendChart) return
+
+  const points = history && history.timestamps
+    ? history.timestamps.map((t, i) => ({ x: t * 1000, y: history.values[i] }))
+    : loadTrendData().map(p => ({ x: p.t, y: p.v }))
+
+  if (points.length === 0) return
+
+  trendChart.data.labels = points.map(p => new Date(p.x))
+  trendChart.data.datasets[0].data = points
+  trendChart.update('none')
+
+  document.getElementById('trend-slope').textContent = slope
+    ? `${(slope * 1000).toFixed(2)} ×10⁻³/hr`
+    : '—'
+  document.getElementById('trend-current').textContent = rms ? rms.toFixed(4) : '—'
+  document.getElementById('trend-count').textContent = points.length
+
+  const badge = document.getElementById('trend-badge')
+  if (badge) {
+    const trendAlert = window._trendAlert || false
+    if (trendAlert) {
+      badge.style.display = 'inline'
+      badge.textContent = '⚠ RISING'
+      badge.style.background = 'rgba(255,107,53,0.2)'
+      badge.style.color = '#FF6B35'
+    } else {
+      badge.style.display = 'inline'
+      badge.textContent = '✓ STABLE'
+      badge.style.background = 'rgba(0,212,170,0.15)'
+      badge.style.color = '#00D4AA'
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 //  Socket Events
 // ─────────────────────────────────────────────────────────
 socket.on('sensor_data', (d) => {
   updateWaveform(d.waveform, d.is_anomaly && d.evaluating);
   updateFFT(d.fft);
+
+  // Trend chart: save RMS point and update
+  if (d.rms !== undefined && d.rms > 0) {
+    saveTrendPoint(d.rms)
+    window._trendAlert = d.trend_alert || false
+  }
+  updateTrendChart(null, d.rms, d.rms_slope)
 
   el.domFreq.textContent = d.dominant_freq;
   el.freqCard.classList.toggle('active', d.dominant_freq > 0);
@@ -762,4 +898,14 @@ el.motorSpeedSlider.addEventListener('change', async () => {
 
   // Restore motor state if server has it
   if (status.motor !== undefined) updateMotorUI(status.motor, status.motor_speed || 200);
+
+  // Load RMS trend from localStorage
+  const savedTrend = loadTrendData()
+  if (savedTrend.length > 0 && trendChart) {
+    const pts = savedTrend.map(p => ({ x: p.t, y: p.v }))
+    trendChart.data.labels = pts.map(p => new Date(p.x))
+    trendChart.data.datasets[0].data = pts
+    trendChart.update('none')
+    document.getElementById('trend-count').textContent = pts.length
+  }
 })();

@@ -12,16 +12,20 @@ import threading
 import yaml
 import serial
 import numpy as np
+from numpy import polyfit
+from scipy import signal
+from scipy.fft import rfft, rfftfreq
 import eventlet
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
-from feature_pipeline import extract_features, dominant_frequency, build_fft_payload
+from feature_pipeline import extract_features, dominant_frequency, build_fft_payload, order_domain
 from ml_models import (
     CompanyClassifier, EnsembleAnomalyModel,
-    GMMAnomalyDetector, PerCompanyModelRegistry,
+    GMMAnomalyDetector, AutoencoderAnomalyDetector,
+    PerCompanyModelRegistry,
     TransferLearningAdapter, TORCH_AVAILABLE
 )
 
@@ -85,6 +89,24 @@ state = {
     'company_confidence': 0.0,
     'company_identified': False,
     'company_fingerprint_buffer': [],
+
+    # ── Order tracking ──
+    'rpm': 0.0,
+    'order_spectrum': {},
+
+    # ── Degradation trending ──
+    'rms_history': [],              # (timestamp, rms) pairs for trending
+    'rms_slope': 0.0,               # slope of last 30min RMS (change/hour)
+    'trend_alert': False,           # True if RMS trending upward significantly
+
+    # ── Auto-stop (sustained anomaly) ──
+    'anomaly_consecutive': 0,       # consecutive anomaly windows
+    'anomaly_auto_stopped': False,  # True if motor was auto-stopped
+    'auto_stop_threshold': 30,      # windows before auto-stop (30 × ~1.28s ≈ 38s)
+
+    # ── Auto-encoder anomaly model ──
+    'autoencoder_model': None,
+    'use_autoencoder': False,
 }
 
 ser = None
@@ -101,6 +123,8 @@ plot_buffer = []
 def build_model(model_type: str = 'ensemble'):
     if model_type == 'gmm':
         return GMMAnomalyDetector()
+    if model_type == 'autoencoder':
+        return AutoencoderAnomalyDetector()
     return EnsembleAnomalyModel()
 
 
@@ -178,6 +202,16 @@ def serial_reader():
                     fft_payload = build_fft_payload(chunk, baseline, SAMPLE_RATE)
                     state['dominant_freq'] = dom_freq
 
+                    # ── Order tracking (RPM normalization) ──
+                    rpm = dom_freq * 60.0  # convert Hz to RPM
+                    state['rpm'] = round(rpm, 1)
+                    arr = np.array(chunk, dtype=np.float64) - baseline
+                    win = signal.windows.hann(len(arr))
+                    raw_spec = np.abs(rfft(arr * win))
+                    raw_freqs = rfftfreq(len(arr), d=1.0 / SAMPLE_RATE)
+                    if rpm > 1:
+                        state['order_spectrum'] = order_domain(raw_spec, raw_freqs, rpm)
+
                     # ── Company fingerprinting (first N samples) ──
                     if not state['company_identified']:
                         state['company_fingerprint_buffer'].append(feats)
@@ -232,13 +266,53 @@ def serial_reader():
                         state['is_anomaly'] = bool(is_anomaly)
                         state['anomaly_score'] = float(score)
 
+                    # ── Degradation trending (RMS over time) ──
+                    rms_val = float(np.sqrt(np.mean(arr ** 2)))
+                    now = time.time()
+                    state['rms_history'].append((now, rms_val))
+                    # Keep last 2 hours of data
+                    cutoff = now - 7200
+                    state['rms_history'] = [(t, v) for t, v in state['rms_history'] if t > cutoff]
+                    # Compute slope over last 30 minutes if enough data
+                    recent = [(t, v) for t, v in state['rms_history'] if t > now - 1800]
+                    if len(recent) >= 10:
+                        t_vals = np.array([r[0] for r in recent])
+                        r_vals = np.array([r[1] for r in recent])
+                        if np.std(t_vals) > 1:
+                            from numpy import polyfit
+                            slope, _ = polyfit(t_vals - t_vals[0], r_vals, 1)
+                            state['rms_slope'] = round(slope * 3600, 6)  # change per hour
+                            state['trend_alert'] = state['rms_slope'] > 0.0005
+
+                    # ── Auto-stop on sustained anomaly ──
+                    if state['evaluating'] and is_anomaly and state['motor'] > 0:
+                        state['anomaly_consecutive'] += 1
+                        if state['anomaly_consecutive'] >= state['auto_stop_threshold'] and not state['anomaly_auto_stopped']:
+                            state['anomaly_auto_stopped'] = True
+                            state['motor'] = 0
+                            state['status'] = '⚠ AUTO-STOP: Sustained anomaly detected — motor stopped'
+                            state['status_level'] = 'error'
+                            socketio.emit('status_update', {
+                                'status': state['status'],
+                                'level': 'error',
+                            })
+                            socketio.emit('motor_state', {'motor': 0, 'speed': 0, 'label': 'AUTO-STOP'})
+                    else:
+                        state['anomaly_consecutive'] = max(0, state['anomaly_consecutive'] - 1)
+                        if state['anomaly_consecutive'] == 0:
+                            state['anomaly_auto_stopped'] = False
+
                     # Emit real-time data to all clients
                     socketio.emit('sensor_data', {
                         'waveform': plot_buffer[-200:],
                         'fft': fft_payload,
                         'dominant_freq': round(dom_freq, 2),
+                        'rpm': round(rpm, 1),
                         'is_anomaly': bool(is_anomaly),
                         'anomaly_score': round(score * 100, 1),
+                        'rms': round(rms_val, 4),
+                        'rms_slope': state['rms_slope'],
+                        'trend_alert': state['trend_alert'],
                         'evaluating': state['evaluating'],
                         'training': state['training'],
                         'company': state['company_name'],
@@ -264,8 +338,16 @@ def _finish_training_internal():
         return
 
     pending_name = state.get('pending_model_name', 'model')
+
+    # Train ensemble model (IF + SVM)
     model_obj = EnsembleAnomalyModel()
     model_obj.fit(state['training_features'])
+
+    # Train auto-encoder model
+    ae_model = AutoencoderAnomalyDetector()
+    ae_model.fit(state['training_features'])
+    state['autoencoder_model'] = ae_model
+    state['use_autoencoder'] = True
 
     state['current_model_obj'] = model_obj
     state['active_model_name'] = pending_name
@@ -518,6 +600,11 @@ def get_status():
         'company_identified': state['company_identified'],
         'feature_dim': FEATURE_DIM,
         'available_companies': COMPANY_CLASSES,
+        'rpm': state['rpm'],
+        'rms_slope': state['rms_slope'],
+        'trend_alert': state['trend_alert'],
+        'anomaly_auto_stopped': state['anomaly_auto_stopped'],
+        'anomaly_consecutive': state['anomaly_consecutive'],
     })
 
 
@@ -778,8 +865,24 @@ def vibration_current():
         'dominant_freq': round(state['dominant_freq'], 2),
         'anomaly_score': round(state['anomaly_score'] * 100, 1),
         'is_anomaly': state['is_anomaly'],
+        'rpm': state['rpm'],
+        'rms_slope': state['rms_slope'],
+        'trend_alert': state['trend_alert'],
         'fft': [],
         'spectral': [],
+    })
+
+
+@app.route('/api/trend')
+def trend_data():
+    """Return RMS history for 7-day trend chart."""
+    history = state['rms_history']
+    if not history:
+        return jsonify({'timestamps': [], 'values': [], 'slope': 0})
+    return jsonify({
+        'timestamps': [int(t) for t, _ in history],
+        'values': [round(v, 4) for _, v in history],
+        'slope': state['rms_slope'],
     })
 
 

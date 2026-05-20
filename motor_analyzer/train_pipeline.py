@@ -21,6 +21,7 @@ sys.path.insert(0, BASE_DIR)
 from ml_models import CompanyClassifier, PerCompanyModelRegistry, TransferLearningAdapter
 
 PROCESSED_DIR = os.path.join(BASE_DIR, 'data', 'processed')
+ENGINEERED_DIR = os.path.join(BASE_DIR, 'data', 'engineered')
 MODELS_DIR = os.path.join(BASE_DIR, 'models')
 COMPANY_MODELS_DIR = os.path.join(MODELS_DIR, 'companies')
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
@@ -34,14 +35,21 @@ def load_config():
         return yaml.safe_load(f) or {}
 
 
-def load_processed_data():
-    X_path = os.path.join(PROCESSED_DIR, 'X_all.npy')
-    y_path = os.path.join(PROCESSED_DIR, 'y_all.npy')
-    company_path = os.path.join(PROCESSED_DIR, 'company_labels.npy')
-    meta_path = os.path.join(PROCESSED_DIR, 'metadata.json')
+def load_processed_data(use_engineered=False):
+    if use_engineered:
+        data_dir = ENGINEERED_DIR
+        source = "engineered"
+    else:
+        data_dir = PROCESSED_DIR
+        source = "processed"
+    
+    X_path = os.path.join(data_dir, 'X_all.npy')
+    y_path = os.path.join(data_dir, 'y_all.npy')
+    company_path = os.path.join(data_dir, 'company_labels.npy')
+    meta_path = os.path.join(data_dir, 'metadata.json')
 
     if not all(os.path.exists(p) for p in [X_path, y_path, company_path, meta_path]):
-        log.error("Processed data not found. Run data_ingestion.py first.")
+        log.error(f"Data not found in {data_dir}/. Run data_ingestion.py or engineer_dataset.py first.")
         return None, None, None, None
 
     X = np.load(X_path)
@@ -50,7 +58,7 @@ def load_processed_data():
     with open(meta_path) as f:
         metadata = json.load(f)
 
-    log.info(f"Loaded {len(X)} samples, {len(metadata['companies'])} companies")
+    log.info(f"Loaded {len(X)} samples ({source}), {len(metadata['companies'])} companies")
     return X, y, company_labels, metadata
 
 
@@ -178,9 +186,11 @@ def main():
     parser = argparse.ArgumentParser(description='MotorSense Training Pipeline')
     parser.add_argument('--transfer', action='store_true',
                         help='Use TransferLearningAdapter with pretrained weights')
+    parser.add_argument('--engineered', action='store_true',
+                        help='Use engineered dataset (augmented + merged CWRU/JNU/Synthetic)')
     args = parser.parse_args()
 
-    X, y, company_labels, metadata = load_processed_data()
+    X, y, company_labels, metadata = load_processed_data(use_engineered=args.engineered)
     if X is None:
         return
 

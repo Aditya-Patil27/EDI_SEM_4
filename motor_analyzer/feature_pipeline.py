@@ -100,6 +100,30 @@ def dominant_frequency(data: list, baseline: float, fs: float = 100.0) -> float:
     return float(freqs[dom_idx]) if dom_idx < len(freqs) else 0.0
 
 
+def order_domain(spectrum, freqs, rpm, max_order=10):
+    """Convert FFT spectrum to order-domain (multiples of RPM) for RPM-independent features.
+    
+    Args:
+        spectrum: FFT magnitude array
+        freqs: frequency array (Hz)
+        rpm: rotational speed (dominant frequency × 60)
+        max_order: maximum order to compute (default 10 means up to 10× RPM)
+    
+    Returns:
+        order_spectrum: dict of {order: magnitude} for integer orders 1..max_order
+    """
+    if rpm < 1:
+        return {o: 0.0 for o in range(1, max_order + 1)}
+    fundamental = rpm / 60.0
+    order_spectrum = {}
+    for o in range(1, max_order + 1):
+        target = o * fundamental
+        idx = np.argmin(np.abs(freqs - target))
+        mag = float(spectrum[idx]) if idx < len(spectrum) else 0.0
+        order_spectrum[o] = mag
+    return order_spectrum
+
+
 def build_fft_payload(data: list, baseline: float, fs: float = 100.0) -> dict:
     if len(data) < 8:
         return {'freqs': [], 'magnitudes': [], 'dominant': 0.0}

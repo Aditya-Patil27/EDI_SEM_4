@@ -501,6 +501,47 @@ class GMMAnomalyDetector:
         return is_anomaly, norm_score
 
 
+class AutoencoderAnomalyDetector:
+    """
+    Neural net auto-encoder for anomaly detection.
+    Trained on normal data only. Anomaly = high reconstruction error.
+    Architecture: 28 → 16 → 8 → 16 → 28
+    Uses sklearn MLPRegressor (no GPU needed).
+    """
+    def __init__(self, threshold_percentile: float = 5.0):
+        from sklearn.neural_network import MLPRegressor
+        self.model = MLPRegressor(
+            hidden_layer_sizes=(16, 8, 16),
+            activation='relu',
+            solver='adam',
+            max_iter=500,
+            random_state=42,
+        )
+        self.threshold_percentile = threshold_percentile
+        self.threshold = None
+        self.trained = False
+        self._train_scores = None
+
+    def fit(self, X):
+        X = np.array(X)
+        self.model.fit(X, X)
+        recon = self.model.predict(X)
+        errors = np.mean((X - recon) ** 2, axis=1)
+        self.threshold = np.percentile(errors, self.threshold_percentile)
+        self._train_scores = errors
+        self.trained = True
+
+    def predict_score(self, x):
+        x_in = np.array(x)
+        if x_in.ndim == 1:
+            x_in = x_in.reshape(1, -1)
+        recon = self.model.predict(x_in)
+        error = float(np.mean((x_in - recon) ** 2, axis=1)[0])
+        is_anomaly = bool(error > self.threshold)
+        score = float(1 / (1 + np.exp(-(error - self.threshold) / (self.threshold + 1e-8))))
+        return is_anomaly, score
+
+
 class PerCompanyModelRegistry:
     """
     Registry that manages one anomaly model per company.

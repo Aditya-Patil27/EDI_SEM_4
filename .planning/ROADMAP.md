@@ -1,36 +1,43 @@
 # MotorSense — Roadmap
 
-## Phase 1: 3D VUI Dashboard
-**Slug**: `3d-vui-dashboard`  
-**Goal**: Add Three.js radar3d, waterfall3d, gauge3d to existing Flask app  
-**Requirements**: R1–R10  
-**Success criteria**:
-- 3 components render live data from either live ESP32 or CWRU replay
-- State machine correct for all 4 states per component
-- Flask endpoint `/api/vibration/current` returns RMS + FFT array
-- No regression in existing Chart.js dashboard
+## ✅ Phase 1: 3D VUI Dashboard (COMPLETE)
+**Goal**: Three.js radar3d, waterfall3d, gauge3d integrated into Flask app  
+**Delivered**: 6 ES modules in `static/3d/`, `/vui` route, SocketIO integration, state machine, dat.GUI controls
 
-## Phase 2: Anomaly Visualization & Alerts
-**Goal**: Add anomaly-focused 3D views and notification system  
-**Requirements**: R11–R14  
-**Success criteria**:
-- 3D feature scatter highlights anomalies in real-time
-- Timeline component shows score history
-- Desktop alert fires on threshold breach
-- Audio alert on sustained (>5s) anomaly
+## ✅ Phase 2: Production Enhancements (COMPLETE)
+**Goal**: Order tracking, autoencoder anomaly model, degradation trending, auto-stop, 7-day trend  
+**Delivered**: All features live and tested
 
-## Phase 3: Edge Deployment & Firmware
-**Goal**: Deploy feature extraction to ESP32, create OTA update pipeline  
+## ✅ Phase 3: Multi-Dataset Engineering Pipeline (COMPLETE)
+**Goal**: Unified training data from CWRU, JNU, MAFAULDA, NASA IMS, Synthetic  
+**Delivered**: Augmentation, RMS normalization, class balancing, severity tracking
+
+## 🔲 Phase 4: Edge Deployment & Firmware
+**Goal**: Deploy feature extraction to ESP32, OTA update pipeline  
 **Requirements**: R15–R17  
 **Success criteria**:
-- ESP32 runs on-device feature extraction at 100 Hz
-- Flask receives pre-extracted features instead of raw samples
-- OTA update mechanism for ESP32 firmware images
+- ESP32 on-device feature extraction at 100 Hz
+- Flask receives pre-extracted features
+- OTA update mechanism
 
-## Phase 4: Dashboard Polish
+## 🔲 Phase 5: Dashboard Polish
 **Goal**: Animation, accessibility, performance optimization  
 **Requirements**: R18–R20  
 **Success criteria**:
-- 30fps on integrated GPU (Intel UHD 620)
-- Colour-blind accessible palette passes WCAG 2.1 AA
-- All transitions are smooth and not jarring
+- 30fps on integrated GPU
+- WCAG 2.1 AA colour-blind palette
+- Smooth transitions
+
+## 🔲 Phase 6: Anomaly Visualization
+**Goal**: 3D feature scatter, anomaly score timeline, alerts  
+**Requirements**: R11–R14  
+**Success criteria**:
+- Real-time 3D scatter highlights anomalies
+- Timeline component shows anomaly score history
+- Desktop + audio alerts on threshold breach
+
+## Future Ideas
+- Degradation-based regression model (predict RUL)
+- Live ESP32 data collection + model retraining loop
+- Mobile-friendly responsive dashboard
+- Historical fault logging to CSV/DB
