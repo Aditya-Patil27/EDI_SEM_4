@@ -30,6 +30,7 @@
   </div>
 
   <div class="header-status">
+    <button class="theme-toggle" id="theme-toggle">Accessibility</button>
     <div class="status-pill" id="conn-pill">
       <span class="status-dot" id="conn-dot"></span>
       <span id="conn-text">Disconnected</span>
@@ -299,6 +300,21 @@
 <!-- Toast Container -->
 <div id="toast-container"></div>
 
-<script src="/static/js/main.js"></script>
+  <script src="/static/js/main.js"></script>
+  <script>
+    const themeToggle = document.getElementById('theme-toggle')
+    if (themeToggle) {
+      if (localStorage.getItem('motorsense-cb-mode') === '1') {
+        document.documentElement.classList.add('cb-mode')
+        themeToggle.textContent = 'Standard'
+      }
+      themeToggle.addEventListener('click', () => {
+        document.documentElement.classList.toggle('cb-mode')
+        const on = document.documentElement.classList.contains('cb-mode')
+        localStorage.setItem('motorsense-cb-mode', on ? '1' : '0')
+        themeToggle.textContent = on ? 'Standard' : 'Accessibility'
+      })
+    }
+  </script>
 </body>
 </html>

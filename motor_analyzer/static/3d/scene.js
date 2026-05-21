@@ -21,9 +21,9 @@ export function createScene(container) {
   camera.position.set(0, 0, 5)
   camera.lookAt(0, 0, 0)
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
   renderer.setSize(w, h)
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   renderer.setClearColor(COLORS.bg, 1)
   container.appendChild(renderer.domElement)
 

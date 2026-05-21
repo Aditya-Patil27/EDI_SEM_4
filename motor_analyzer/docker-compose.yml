@@ -1,0 +1,21 @@
+services:
+  motor-analyzer:
+    build: .
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - FLASK_ENV=production
+    command: python app.py
+
+  cwru-replay:
+    build: .
+    profiles:
+      - replay
+    depends_on:
+      - motor-analyzer
+    environment:
+      - APP_URL=http://motor-analyzer:5050
+    command: python cwru_replay.py --sequence --mode http --loop

@@ -21,9 +21,7 @@
       max-width: 1400px;
       margin: 0 auto;
     }
-    .vui-full {
-      grid-column: 1 / -1;
-    }
+    .vui-full { grid-column: 1 / -1; }
     .vui-panel {
       background: var(--glass-bg, #1A1F2ECC);
       border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
@@ -65,9 +63,7 @@
       margin: 12px 16px 0;
       transition: background 0.2s;
     }
-    .vui-return:hover {
-      background: rgba(255,255,255,0.08);
-    }
+    .vui-return:hover { background: rgba(255,255,255,0.08); }
     #gui-toggle {
       position: fixed;
       bottom: 16px;
@@ -83,8 +79,32 @@
       backdrop-filter: blur(12px);
     }
     .dg.ac { z-index: 999 !important; }
+    .vui-panel { will-change: transform; transform: translateZ(0); }
+    .vui-canvas-wrap { will-change: transform; }
+    .alert-bar {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: rgba(239,68,68,0.12);
+      border: 1px solid rgba(239,68,68,0.4);
+      border-radius: 8px;
+      animation: flicker 0.8s infinite;
+      margin-bottom: 8px;
+    }
+    .alert-bar.active { display: flex; }
+    .alert-bar-icon { font-size: 18px; color: #ef4444; }
+    .alert-bar-text { font-size: 12px; font-weight: 700; color: #ef4444; letter-spacing: 0.3px; }
+    #timeline-chart { width: 100% !important; height: 100% !important; }
     @media (max-width: 1024px) {
       .vui-layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .vui-layout { padding: 8px; gap: 10px; }
+      .vui-panel { min-height: 240px; }
+      .vui-canvas-wrap { height: 240px; }
+      .vui-panel h3 { font-size: 11px; }
+      .vui-return { font-size: 12px; padding: 6px 12px; margin: 8px 8px 0; }
     }
   </style>
 </head>
@@ -104,9 +124,14 @@
     </div>
   </div>
   <div class="header-status">
+    <button class="theme-toggle" id="theme-toggle">Accessibility</button>
     <div class="status-pill" id="conn-pill">
       <span class="status-dot" id="conn-dot"></span>
       <span id="conn-text">Disconnected</span>
+    </div>
+    <div class="status-pill" id="anomaly-pill" style="display:none;">
+      <span class="status-dot" id="anomaly-dot"></span>
+      <span id="anomaly-text">OK</span>
     </div>
   </div>
 </header>
@@ -127,6 +152,20 @@
   <div class="vui-panel vui-full">
     <h3>Waterfall — Frequency Drift</h3>
     <div class="vui-canvas-wrap" id="waterfall3d-container" style="height:360px;"></div>
+  </div>
+
+  <div class="vui-panel vui-full" id="scatter-panel">
+    <h3>3D Feature Space — PCA Embedding</h3>
+    <div class="alert-bar" id="alert-bar">
+      <span class="alert-bar-icon">&#9888;</span>
+      <span class="alert-bar-text" id="alert-bar-text">ANOMALY DETECTED</span>
+    </div>
+    <div class="vui-canvas-wrap" id="scatter3d-container" style="height:360px;"></div>
+  </div>
+
+  <div class="vui-panel vui-full">
+    <h3>Anomaly Score — Timeline</h3>
+    <div class="vui-canvas-wrap" id="timeline-container" style="height:120px;"></div>
   </div>
 
   <div class="vui-panel vui-full">
@@ -158,6 +197,30 @@
   const connPill = document.getElementById('conn-pill')
   const connDot = document.getElementById('conn-dot')
   const connText = document.getElementById('conn-text')
+  const anomalyPill = document.getElementById('anomaly-pill')
+  const anomalyDot = document.getElementById('anomaly-dot')
+  const anomalyText = document.getElementById('anomaly-text')
+  const alertBar = document.getElementById('alert-bar')
+  const alertBarText = document.getElementById('alert-bar-text')
+
+  let audioCtx = null
+  function playAlertBeep() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      osc.connect(gain)
+      gain.connect(audioCtx.destination)
+      osc.frequency.value = 880
+      osc.type = 'square'
+      gain.gain.value = 0.15
+      osc.start()
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3)
+      osc.stop(audioCtx.currentTime + 0.3)
+    } catch (e) { /* audio not supported */ }
+  }
+
+  let prevAnomaly = false
 
   socket.on('connect', () => {
     connPill.className = 'status-pill connected'
@@ -168,7 +231,55 @@
     connPill.className = 'status-pill'
     connDot.className = 'status-dot'
     connText.textContent = 'Disconnected'
+    anomalyPill.style.display = 'none'
   })
+
+  socket.on('sensor_data', (data) => {
+    const isAnom = data.is_anomaly
+    const score = data.anomaly_score || 0
+
+    if (isAnom) {
+      anomalyPill.style.display = 'flex'
+      anomalyDot.className = 'status-dot red'
+      anomalyText.textContent = 'ANOMALY'
+      alertBar.classList.add('active')
+    } else {
+      anomalyDot.className = 'status-dot green'
+      anomalyText.textContent = 'OK'
+      alertBar.classList.remove('active')
+    }
+
+    if (isAnom && !prevAnomaly) {
+      playAlertBeep()
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('MotorSense Alert', { body: 'Anomaly detected in vibration data', icon: '/static/favicon.ico' })
+      }
+      if (data.trend_alert) {
+        alertBarText.textContent = 'ANOMALY + TREND BREACH'
+      } else {
+        alertBarText.textContent = 'ANOMALY DETECTED'
+      }
+    }
+    prevAnomaly = isAnom
+  })
+
+  if ('Notification' in window && Notification.permission !== 'denied' && Notification.permission !== 'granted') {
+    Notification.requestPermission()
+  }
+
+  const themeToggle = document.getElementById('theme-toggle')
+  if (themeToggle) {
+    if (localStorage.getItem('motorsense-cb-mode') === '1') {
+      document.documentElement.classList.add('cb-mode')
+      themeToggle.textContent = 'Standard'
+    }
+    themeToggle.addEventListener('click', () => {
+      document.documentElement.classList.toggle('cb-mode')
+      const on = document.documentElement.classList.contains('cb-mode')
+      localStorage.setItem('motorsense-cb-mode', on ? '1' : '0')
+      themeToggle.textContent = on ? 'Standard' : 'Accessibility'
+    })
+  }
 </script>
 </body>
 </html>

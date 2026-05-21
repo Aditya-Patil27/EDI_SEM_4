@@ -59,6 +59,46 @@ body {
   background-size: 40px 40px;
 }
 
+/* ── WCAG 2.1 AA Colour-Blind Safe Palette ── */
+:root.cb-mode, .cb-mode {
+  --cyan:       #0077BB;
+  --cyan-dim:   rgba(0,119,187,0.15);
+  --cyan-glow:  rgba(0,119,187,0.35);
+  --purple:     #EE7733;
+  --purple-dim: rgba(238,119,51,0.15);
+  --green:      #009988;
+  --green-dim:  rgba(0,153,136,0.15);
+  --amber:      #CCBB44;
+  --amber-dim:  rgba(204,187,68,0.15);
+  --red:        #CC3311;
+  --red-dim:    rgba(204,51,17,0.15);
+}
+
+/* ── Theme toggle button ── */
+.theme-toggle {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 12px;
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--font);
+}
+.theme-toggle:hover {
+  border-color: var(--border-2);
+  color: var(--text-1);
+}
+
+/* ── Smooth transitions for all interactive elements ── */
+.btn, .model-item, .metric-card, .panel-card, .drawer, .toast, .status-bar {
+  transition: all 0.2s ease;
+}
+.vui-canvas-wrap canvas {
+  transition: opacity 0.3s ease;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -1001,4 +1041,42 @@ body {
   }
   .left-panel, .right-panel { border: none; border-bottom: 1px solid var(--border); }
   .charts-area { min-height: 500px; }
+}
+@media (max-width: 640px) {
+  .header { padding: 0 12px; height: 56px; flex-wrap: wrap; gap: 8px; }
+  .brand-name { font-size: 15px; }
+  .brand-icon { width: 32px; height: 32px; }
+  .brand-sub { font-size: 10px; }
+  .header-status { gap: 4px; }
+  .status-pill { font-size: 10px; padding: 3px 8px; }
+  .left-panel, .right-panel { padding: 10px; gap: 8px; }
+  .metrics-row { grid-template-columns: 1fr; gap: 6px; }
+  .metric-card { padding: 10px 8px; }
+  .metric-value { font-size: 20px; }
+  .chart-card { padding: 10px 12px; }
+  .chart-header { margin-bottom: 8px; }
+  .chart-title { font-size: 11px; }
+  .btn { padding: 10px 14px; font-size: 13px; min-height: 40px; }
+  .drawer { width: 280px; }
+  .form-input, .form-select { font-size: 16px; padding: 10px 11px; }
+  .slider { height: 6px; }
+  .slider::-webkit-slider-thumb { width: 22px; height: 22px; }
+  .models-list { max-height: 200px; }
+  .model-item { padding: 10px; }
+  .log-list { max-height: 140px; font-size: 10px; }
+  #toast-container { bottom: 12px; right: 12px; left: 12px; }
+  .toast { min-width: auto; font-size: 12px; padding: 10px 14px; }
+}
+@media (max-width: 480px) {
+  .header { height: auto; padding: 8px 10px; }
+  .header-brand { gap: 8px; }
+  .main-grid { padding: 0; }
+  .left-panel, .right-panel { padding: 8px; }
+  .chart-card { padding: 8px 10px; }
+  .brand-name { font-size: 14px; }
+  .brand-sub { font-size: 9px; }
+  .metric-value { font-size: 18px; }
+  .panel-card { padding: 12px; }
+  .btn-row { flex-direction: column; }
+  .btn-row .btn { width: 100%; justify-content: center; }
 }

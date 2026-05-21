@@ -175,7 +175,9 @@ def eval_transfer_classifier(model_path):
 
 
 def eval_real_company_classifier():
-    """Evaluate on the real CWRU/JNU/Synthetic data — trivially 100%."""
+    """Evaluate on the real CWRU/JNU/Synthetic data — note: datasets are from
+    different research labs, not real companies. Performance reflects RPM-level
+    separability, not real-world company identification accuracy."""
     import json
     data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'processed')
     X = np.load(os.path.join(data_dir, 'X_all.npy'))
@@ -199,8 +201,10 @@ def eval_real_company_classifier():
     report = classification_report(y_te, preds, target_names=company_names, output_dict=True)
     logging.info(f"  Accuracy: {acc:.4f}")
     logging.info(f"  F1: { {c: round(report[c]['f1-score'], 3) for c in company_names} }")
-    logging.info(f"  NOTE: 100% expected — datasets are from different research labs,")
-    logging.info(f"  not real companies. This is NOT representative of real-world performance.")
+    logging.info(f"  NOTE: This evaluates on data from different research labs (CWRU, JNU,")
+    logging.info(f"  MAFAULDA, etc.) collected under different conditions. The performance")
+    logging.info(f"  reflects RPM-level separability rather than real company identification.")
+    logging.info(f"  See the overlap sweep benchmark for realistic accuracy estimates.")
 
 
 def evaluate_anomaly_detection():

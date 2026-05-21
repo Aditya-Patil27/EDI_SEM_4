@@ -1,0 +1,37 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: motor_analyzer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -v -m "not slow" --ignore=tests/test_live_deployment.py
+
+      - name: Verify model files exist
+        run: |
+          python -c "
+          import os, json
+          assert os.path.exists('models/company_classifier.pth')
+          assert os.path.exists('models/companies/manifest.json')
+          assert os.path.exists('models/rul_predictor.pkl')
+          assert os.path.exists('models/motor_classifier.pkl')
+          manifest = json.load(open('models/companies/manifest.json'))
+          assert len(manifest['companies']) >= 5
+          print(f'Models OK ({len(manifest[\"companies\"])} companies)')
+          "

@@ -182,12 +182,43 @@ def train_transfer_classifier(X, company_labels, metadata):
     return adapter, company_names, acc
 
 
+def train_rul_model():
+    """Train RUL prediction model from NASA IMS run-to-failure data."""
+    cfg = load_config()
+    rul_cfg = cfg.get('rul', {})
+    if not rul_cfg.get('enabled', True):
+        log.info("RUL model training disabled in config")
+        return
+
+    from rul_model import train_rul_model as _train_rul
+    model_type = rul_cfg.get('model_type', 'rf')
+    log.info(f"=== Training RUL Predictor (model_type={model_type}) ===")
+    _train_rul(model_type=model_type)
+
+
+def train_motor_classifier():
+    """Train motor characteristics classifier from CWRU data."""
+    cfg = load_config()
+    motor_cfg = cfg.get('motor', {})
+    if not motor_cfg.get('enabled', True):
+        log.info("Motor classifier training disabled in config")
+        return
+
+    from motor_classifier import train_motor_classifier as _train_motor
+    log.info("=== Training Motor Characteristics Classifier ===")
+    _train_motor()
+
+
 def main():
     parser = argparse.ArgumentParser(description='MotorSense Training Pipeline')
     parser.add_argument('--transfer', action='store_true',
                         help='Use TransferLearningAdapter with pretrained weights')
     parser.add_argument('--engineered', action='store_true',
                         help='Use engineered dataset (augmented + merged CWRU/JNU/Synthetic)')
+    parser.add_argument('--rul', action='store_true',
+                        help='Train RUL degradation model from NASA IMS')
+    parser.add_argument('--motor', action='store_true',
+                        help='Train motor characteristics classifier from CWRU')
     args = parser.parse_args()
 
     X, y, company_labels, metadata = load_processed_data(use_engineered=args.engineered)
@@ -214,6 +245,14 @@ def main():
 
     # Train per-company anomaly models
     train_anomaly_models(X, y, company_labels, metadata)
+
+    # Train RUL degradation model if requested
+    if args.rul:
+        train_rul_model()
+
+    # Train motor characteristics classifier if requested
+    if args.motor:
+        train_motor_classifier()
 
     log.info("\nDone. All models trained and saved.")
     log.info(f"  Anomaly models: {COMPANY_MODELS_DIR}/")
