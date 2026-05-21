@@ -12,32 +12,34 @@
 **Goal**: Unified training data from CWRU, JNU, MAFAULDA, NASA IMS, Synthetic  
 **Delivered**: Augmentation, RMS normalization, class balancing, severity tracking
 
-## 🔲 Phase 4: Edge Deployment & Firmware
+## ✅ Phase 4: Edge Deployment & Firmware (COMPLETE)
 **Goal**: Deploy feature extraction to ESP32, OTA update pipeline  
-**Requirements**: R15–R17  
-**Success criteria**:
-- ESP32 on-device feature extraction at 100 Hz
-- Flask receives pre-extracted features
-- OTA update mechanism
+**Delivered**: ESP32 firmware v2 (`esp32_motor_accel.ino`) with on-device feature extraction (13-dim: RMS, P2P, variance, crest, ZCR, 8 FFT bands via arduinoFFT); dual-mode protocol (raw float stream + `F:` prefixed feature lines); WiFi + ArduinoOTA support; `_handle_edge_features()` + `_process_feature_vector()` in Flask serial reader maps 13→28-dim; `/api/config/edge` config endpoint; `/api/firmware/upload` + `/api/firmware/info` OTA endpoints
 
-## 🔲 Phase 5: Dashboard Polish
+## ✅ Phase 5: Dashboard Polish (COMPLETE)
 **Goal**: Animation, accessibility, performance optimization  
-**Requirements**: R18–R20  
-**Success criteria**:
-- 30fps on integrated GPU
-- WCAG 2.1 AA colour-blind palette
-- Smooth transitions
+**Delivered**: WCAG 2.1 AA colour-blind safe palette (`.cb-mode` CSS class toggle with localStorage persistence); Accessibility toggle button in both dashboards; Three.js pixel ratio capped at 1.5 (`powerPreference: 'high-performance'`); `will-change: transform` + GPU acceleration on VUI panels; smooth `transition: all 0.2s ease` across all interactive elements
 
-## 🔲 Phase 6: Anomaly Visualization
+## ✅ Phase 6: Anomaly Visualization (COMPLETE)
 **Goal**: 3D feature scatter, anomaly score timeline, alerts  
-**Requirements**: R11–R14  
-**Success criteria**:
-- Real-time 3D scatter highlights anomalies
-- Timeline component shows anomaly score history
-- Desktop + audio alerts on threshold breach
+**Delivered**: `/api/features/embedding` endpoint (PCA 28→3), `Scatter3D` Three.js component with OrbitControls, anomaly timeline Chart.js, audio beep + desktop notifications, anomaly alert bar in VUI, status pill for anomaly state
 
-## Future Ideas
-- Degradation-based regression model (predict RUL)
-- Live ESP32 data collection + model retraining loop
-- Mobile-friendly responsive dashboard
-- Historical fault logging to CSV/DB
+## ✅ Phase 7: Live Deployment Test (COMPLETE)
+**Goal**: End-to-end CWRU replay + Flask test with all API endpoints verified  
+**Delivered**: 11 pytest tests using Flask test client; CWRU replay bridge HTTP injection; 15+ endpoints verified
+
+## ✅ Phase 8: Deployment Infrastructure (COMPLETE)
+**Goal**: Dockerfile, docker-compose, GitHub Actions CI  
+**Delivered**: python:3.12-slim Dockerfile, docker-compose with cwru-replay profile, CI runs tests on push/PR
+
+## ✅ Phase 9: Online Retraining Loop (COMPLETE)
+**Goal**: Fine-tune anomaly models from streaming data without full retrain  
+**Delivered**: `state['retrain_buffer']` accumulates feature vectors; auto-refit at 100 samples; `POST /api/retrain` trigger
+
+## ✅ Phase 10: Mobile Responsive Dashboard (COMPLETE)
+**Goal**: Dashboard adapts to mobile viewports, touch controls  
+**Delivered**: Responsive CSS breakpoints at 900/640/480px; touch-friendly button sizes (40px+ min-height); stacked layout on mobile; larger form inputs for touch
+
+## ✅ Phase 11: API Documentation (Swagger) (COMPLETE)
+**Goal**: Auto-generated OpenAPI/Swagger docs for all endpoints  
+**Delivered**: `/api/openapi.json` returns OpenAPI 3.0.3 spec for all 16 endpoints; `/api/docs` serves Swagger UI

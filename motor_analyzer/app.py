@@ -26,6 +26,8 @@ from scipy.fft import rfft, rfftfreq
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from feature_pipeline import extract_features, dominant_frequency, build_fft_payload, order_domain
 from ml_models import (
     CompanyClassifier, EnsembleAnomalyModel,
@@ -33,6 +35,8 @@ from ml_models import (
     PerCompanyModelRegistry,
     TransferLearningAdapter, TORCH_AVAILABLE
 )
+from rul_model import RULPredictor
+from motor_classifier import MotorClassifier
 
 # ─────────────────────────────────────────────────────────────
 #  App Setup
@@ -63,6 +67,12 @@ WINDOW_SIZE = APP_CONFIG.get('streaming', {}).get('window_size', 128)
 
 # Company-aware model registry
 company_registry = PerCompanyModelRegistry(models_dir=COMPANY_MODELS_DIR)
+
+# RUL degradation predictor (optional)
+rul_predictor = RULPredictor.load()
+
+# Motor characteristics classifier (optional)
+motor_classifier = MotorClassifier.load()
 
 # ─────────────────────────────────────────────────────────────
 #  Shared Application State
@@ -110,6 +120,11 @@ state = {
     # ── Auto-encoder anomaly model ──
     'autoencoder_model': None,
     'use_autoencoder': False,
+
+    # ── Online retraining buffer ──
+    'retrain_buffer': [],            # accumulated feature vectors for incremental refit
+    'retrain_count': 0,              # number of retrain operations performed
+    'retrain_threshold': 100,        # buffer size threshold for auto-retrain
 }
 
 ser = None
@@ -150,6 +165,41 @@ def _drain_serial(s):
     return lines
 
 
+def _handle_edge_features(feature_line):
+    """Handle pre-extracted feature vectors from ESP32 edge device.
+    Feature format: rms,p2p,variance,crest,zcr,band0,...,band7 (13 values)
+    Maps into our 28-dim feature space with zeros for missing dims.
+    """
+    try:
+        parts = [float(x) for x in feature_line.split(',')]
+        if len(parts) < 13:
+            return
+        rms, p2p, variance, crest, zcr = parts[0:5]
+        bands = parts[5:13]
+        feats = [rms, p2p, variance, 0.0, 0.0, crest, 0.0, zcr] + bands + [0.0] * 10
+        _process_feature_vector(feats)
+    except (ValueError, IndexError):
+        pass
+
+
+def _process_feature_vector(feats):
+    """Process a 28-dim feature vector through ML pipeline."""
+    global plot_buffer
+    if len(feats) < 28:
+        return
+    if state['current_model_obj'] is not None:
+        is_anomaly, score = state['current_model_obj'].predict_score(feats)
+        state['anomaly_score'] = float(score)
+        state['is_anomaly'] = bool(is_anomaly)
+        if is_anomaly:
+            state['anomaly_consecutive'] += 1
+            if state['anomaly_consecutive'] >= state['auto_stop_threshold']:
+                state['auto_stopped'] = True
+        else:
+            state['anomaly_consecutive'] = max(0, state['anomaly_consecutive'] - 1)
+    state['feature_count'] = state.get('feature_count', 0) + 1
+
+
 def serial_reader():
     global ser, raw_buffer, plot_buffer
 
@@ -182,6 +232,10 @@ def serial_reader():
                 # Lines starting with '#' are ESP32 status/debug messages
                 if line.startswith('#'):
                     socketio.emit('esp32_log', {'msg': line[1:].strip()})
+                    continue
+                # Lines starting with 'F:' are pre-extracted features from ESP32
+                if line.startswith('F:'):
+                    _handle_edge_features(line[2:])
                     continue
                 try:
                     val = float(line)
@@ -778,7 +832,44 @@ def inject_samples():
     if len(plot_buffer) > 600:
         plot_buffer = plot_buffer[-600:]
 
+    # Online retraining: accumulate features and auto-retrain at threshold
+    if state['baseline_ready'] and len(vals) >= 80:
+        feats = extract_features(vals[:80], state['baseline'])
+        state['retrain_buffer'].append(feats)
+        if len(state['retrain_buffer']) >= state['retrain_threshold']:
+            _online_retrain()
+
     return jsonify({'ok': True, 'injected': len(vals)})
+
+
+def _online_retrain():
+    """Incremental retrain of anomaly model from accumulated buffer."""
+    buffer = state['retrain_buffer']
+    if len(buffer) < 30:
+        return
+    X_new = np.array(buffer)
+    model = EnsembleAnomalyModel()
+    model.fit(X_new)
+    state['current_model_obj'] = model
+    state['active_model_name'] = 'online_retrained'
+    state['retrain_count'] += 1
+    state['retrain_buffer'] = state['retrain_buffer'][-50:]  # keep last 50
+    state['status'] = f'Online retrain #{state["retrain_count"]} ({len(X_new)} windows)'
+    state['status_level'] = 'success'
+
+
+@app.route('/api/retrain', methods=['POST'])
+def trigger_retrain():
+    """Manually trigger online retraining from accumulated buffer."""
+    before = len(state['retrain_buffer'])
+    _online_retrain()
+    after = len(state['current_model_obj'].training_data) if hasattr(state['current_model_obj'], 'training_data') else 0
+    return jsonify({
+        'ok': True,
+        'buffer_before': before,
+        'model_trained': state['retrain_count'],
+        'status': state['status'],
+    })
 
 
 # ─────────────────────────────────────────────────────────────
@@ -885,6 +976,184 @@ def trend_data():
         'values': [round(v, 4) for _, v in history],
         'slope': state['rms_slope'],
     })
+
+
+@app.route('/api/rul')
+def rul_prediction():
+    """Predict remaining useful life from latest features."""
+    raw = plot_buffer[-128:] if plot_buffer else []
+    if len(raw) < 50:
+        return jsonify({'rul': 0.5, 'trained': rul_predictor.trained, 'status': 'insufficient_data'})
+    baseline = float(np.mean(raw))
+    feats = extract_features(raw, baseline)
+    pred = rul_predictor.predict(feats)
+    return jsonify({
+        'rul': round(pred, 4),
+        'rul_pct': round(pred * 100, 1),
+        'trained': rul_predictor.trained,
+        'status': 'active',
+    })
+
+
+@app.route('/api/motor/identify')
+def motor_identify():
+    """Identify physical motor characteristics from latest vibration data."""
+    raw = plot_buffer[-128:] if plot_buffer else []
+    if len(raw) < 50:
+        return jsonify({'status': 'insufficient_data', 'trained': motor_classifier.trained})
+    baseline = float(np.mean(raw))
+    feats = extract_features(raw, baseline)
+    result = motor_classifier.predict(feats)
+    return jsonify({**result, 'trained': motor_classifier.trained, 'status': 'active'})
+
+
+@app.route('/api/explain')
+def explain_prediction():
+    """Return SHAP feature importance explanations for latest prediction."""
+    raw = plot_buffer[-128:] if plot_buffer else []
+    if len(raw) < 50:
+        return jsonify({'status': 'insufficient_data'})
+    baseline = float(np.mean(raw))
+    feats = extract_features(raw, baseline)
+    explanations = motor_classifier.explain(feats, MotorClassifier.feature_names())
+    return jsonify({
+        'explanations': explanations,
+        'status': 'active',
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Edge / Firmware Endpoints (Phase 4)
+# ─────────────────────────────────────────────────────────────
+@app.route('/api/config/edge', methods=['GET', 'POST'])
+def edge_config():
+    """Get or set edge device configuration (feature mode, sampling rate)."""
+    if request.method == 'POST':
+        data = request.json or {}
+        if 'feature_mode' in data:
+            state['edge_feature_mode'] = bool(data['feature_mode'])
+        if 'sample_rate' in data:
+            state['edge_sample_rate'] = int(data['sample_rate'])
+        return jsonify({'ok': True, 'feature_mode': state.get('edge_feature_mode', False)})
+    return jsonify({
+        'feature_mode': state.get('edge_feature_mode', False),
+        'sample_rate': state.get('edge_sample_rate', 100),
+        'version': '2.0',
+    })
+
+
+@app.route('/api/firmware/upload', methods=['POST'])
+def firmware_upload():
+    """Upload new firmware binary for OTA update."""
+    if 'firmware' not in request.files:
+        return jsonify({'ok': False, 'error': 'No firmware file'}), 400
+    f = request.files['firmware']
+    if f.filename == '':
+        return jsonify({'ok': False, 'error': 'Empty filename'}), 400
+    firmware_dir = os.path.join(os.path.dirname(__file__), 'firmware')
+    os.makedirs(firmware_dir, exist_ok=True)
+    save_path = os.path.join(firmware_dir, 'firmware.bin')
+    f.save(save_path)
+    return jsonify({
+        'ok': True,
+        'size': os.path.getsize(save_path),
+        'path': save_path,
+        'note': 'Upload via OTA to ESP32 (send "OTA" over serial first)',
+    })
+
+
+@app.route('/api/firmware/info')
+def firmware_info():
+    """Return latest firmware info."""
+    firmware_dir = os.path.join(os.path.dirname(__file__), 'firmware')
+    fw_path = os.path.join(firmware_dir, 'firmware.bin')
+    if os.path.exists(fw_path):
+        return jsonify({
+            'available': True,
+            'size': os.path.getsize(fw_path),
+            'modified': os.path.getmtime(fw_path),
+        })
+    return jsonify({'available': False})
+
+
+@app.route('/api/features/embedding')
+def feature_embedding():
+    """Return PCA-reduced 3D embedding of recent feature vectors with anomaly labels."""
+    from collections import deque
+    buf = state['retrain_buffer']
+    if len(buf) < 10:
+        return jsonify({'points': [], 'status': 'insufficient_data'})
+    X = np.array(buf)
+    if X.shape[0] < 3 or X.shape[1] < 3:
+        return jsonify({'points': [], 'status': 'insufficient_data'})
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    n_comp = min(3, X_scaled.shape[1], X_scaled.shape[0])
+    pca = PCA(n_components=n_comp)
+    coords = pca.fit_transform(X_scaled)
+    scores = []
+    if state['current_model_obj'] is not None:
+        for i in range(len(X)):
+            is_anom, score = state['current_model_obj'].predict_score(X[i])
+            scores.append(round(float(score), 4))
+    points = [
+        {'x': round(float(p[0]), 4), 'y': round(float(p[1]), 4),
+         'z': round(float(p[2]), 4) if n_comp > 2 else 0,
+         'score': scores[i] if scores else 0.0,
+         'anomaly': bool(scores[i] > 0.5) if scores else False}
+        for i, p in enumerate(coords)
+    ]
+    return jsonify({
+        'points': points,
+        'explained_variance': [round(float(v), 3) for v in pca.explained_variance_ratio_],
+        'n_components': n_comp,
+        'status': 'active',
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+#  Swagger / OpenAPI Docs
+# ─────────────────────────────────────────────────────────────
+OPENAPI_SPEC = {
+    'openapi': '3.0.3',
+    'info': {
+        'title': 'MotorSense API',
+        'version': '1.0.0',
+        'description': 'Real-time motor vibration analysis, anomaly detection, RUL prediction, and motor characteristics classification.',
+    },
+    'servers': [{'url': 'http://localhost:5050', 'description': 'Local development'}],
+    'paths': {
+        '/': {'get': {'summary': 'Main dashboard HTML', 'responses': {'200': {'description': 'HTML page'}}}},
+        '/vui': {'get': {'summary': '3D VUI dashboard HTML', 'responses': {'200': {'description': 'HTML page'}}}},
+        '/api/ports': {'get': {'summary': 'List available serial ports', 'responses': {'200': {'description': 'Array of port objects'}}}},
+        '/api/connect': {'post': {'summary': 'Connect to serial port', 'requestBody': {'content': {'application/json': {'schema': {'type': 'object', 'properties': {'port': {'type': 'string'}, 'baud': {'type': 'integer'}}}}}}, 'responses': {'200': {'description': 'Connection status'}}}},
+        '/api/disconnect': {'post': {'summary': 'Disconnect serial port', 'responses': {'200': {'description': 'Disconnected'}}}},
+        '/api/disconnect/force': {'post': {'summary': 'Force disconnect serial port', 'responses': {'200': {'description': 'Disconnected'}}}},
+        '/api/status': {'get': {'summary': 'System status with anomaly score', 'responses': {'200': {'description': 'Status object'}}}},
+        '/api/fft': {'get': {'summary': 'Latest FFT data', 'responses': {'200': {'description': 'FFT array'}}}},
+        '/api/models': {'get': {'summary': 'List saved models', 'responses': {'200': {'description': 'Model list'}}}},
+        '/api/company': {'get': {'summary': 'Company classification result', 'responses': {'200': {'description': 'Company info'}}}},
+        '/api/vibration/current': {'get': {'summary': 'Latest vibration metrics', 'responses': {'200': {'description': 'RMS, freq, anomaly score'}}}},
+        '/api/trend': {'get': {'summary': '7-day RMS trend data', 'responses': {'200': {'description': 'Timestamps and values'}}}},
+        '/api/rul': {'get': {'summary': 'RUL prediction from latest features', 'responses': {'200': {'description': 'RUL score 0-1'}}}},
+        '/api/motor/identify': {'get': {'summary': 'Motor characteristics (HP, bearing, diameter)', 'responses': {'200': {'description': 'Classification results'}}}},
+        '/api/explain': {'get': {'summary': 'SHAP feature importance explanations', 'responses': {'200': {'description': 'Top-5 features per output'}}}},
+        '/api/features/embedding': {'get': {'summary': 'PCA 3D embedding of recent features', 'responses': {'200': {'description': '3D points with anomaly labels'}}}},
+        '/api/retrain': {'post': {'summary': 'Trigger online model retrain', 'responses': {'200': {'description': 'Retrain result'}}}},
+        '/api/config/edge': {'get': {'summary': 'Edge device configuration', 'responses': {'200': {'description': 'Feature mode, sample rate, version'}}}},
+        '/api/firmware/info': {'get': {'summary': 'Latest firmware info', 'responses': {'200': {'description': 'Firmware availability and size'}}}},
+    },
+}
+
+
+@app.route('/api/openapi.json')
+def openapi_spec():
+    return jsonify(OPENAPI_SPEC)
+
+
+@app.route('/api/docs')
+def swagger_ui():
+    return render_template('swagger.html')
 
 
 # ─────────────────────────────────────────────────────────────

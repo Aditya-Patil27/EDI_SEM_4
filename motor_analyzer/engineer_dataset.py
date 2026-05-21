@@ -22,9 +22,18 @@ log = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RAW_DIR = os.path.join(BASE_DIR, 'data', 'raw')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'data', 'engineered')
+CONFIG_PATH = os.path.join(BASE_DIR, 'config.yaml')
 
-WINDOW_SIZE = 128
-TARGET_FS = 100
+def _load_config():
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f) or {}
+
+_cfg = _load_config().get('data', {})
+WINDOW_SIZE = _cfg.get('window_size', 128)
+TARGET_FS = _cfg.get('target_fs', 100)
+CLASS_BALANCE_TARGET = _cfg.get('class_balance_target', 5000)
 
 CLASS_MAP_CWRU = {
     'Normal': 'Normal',
@@ -96,12 +105,13 @@ def _features_from_segment(segment, fs=TARGET_FS):
 
 
 def _augmentation_config():
-    """Return augmentation parameters. Tweak these to control variability."""
+    """Return augmentation parameters from config.yaml (with hardcoded fallback)."""
+    aug = _cfg.get('augmentation', {})
     return {
-        'rpm_scale_range': (0.85, 1.15),    # ±15% RPM variation
-        'noise_level_range': (0.0, 0.15),   # up to 15% noise
-        'amplitude_scale_range': (0.7, 1.3),# ±30% amplitude
-        'augment_multiplier': 3,             # generate N augmented copies per original
+        'rpm_scale_range': tuple(aug.get('rpm_scale_range', [0.85, 1.15])),
+        'noise_level_range': tuple(aug.get('noise_level_range', [0.0, 0.15])),
+        'amplitude_scale_range': tuple(aug.get('amplitude_scale_range', [0.7, 1.3])),
+        'augment_multiplier': aug.get('augment_multiplier', 3),
     }
 
 
@@ -440,8 +450,10 @@ def _process_mafaulda_csv(dir_path, fname, fault_class, dataset_name, base_fs, r
             })
 
 
-def _process_synthetic(samples_per_class=50):
+def _process_synthetic(samples_per_class=None):
     """Generate synthetic data with RPM overlap, matching engineered format."""
+    if samples_per_class is None:
+        samples_per_class = _cfg.get('synthetic', {}).get('samples_per_class', 50)
     log.info("Processing Synthetic dataset...")
     from generate_synthetic_data import (
         normal_vibration, unbalanced_vibration,
@@ -498,11 +510,13 @@ def _normalize_rms_across_datasets(all_records):
     return all_records
 
 
-def _process_nasa_ims(aug_cfg, max_files_per_class=50):
+def _process_nasa_ims(aug_cfg, max_files_per_class=None):
     """Process NASA IMS run-to-failure bearing dataset.
     Format: tab-separated text, 4 channels × 40960 samples at 20kHz per file.
     First N% of each test → Normal, last N% → fault class.
     """
+    if max_files_per_class is None:
+        max_files_per_class = _cfg.get('nasa_ims', {}).get('max_files_per_class', 50)
     log.info("Processing NASA IMS dataset (run-to-failure)...")
     ims_base = os.path.join(RAW_DIR, 'nasa_ims')
     if not os.path.exists(ims_base):
@@ -627,8 +641,10 @@ def _process_nasa_ims_file(dir_path, fname, fault_class, dataset_name, fs, recor
             })
 
 
-def _resample_classes(records, target_per_class=5000):
+def _resample_classes(records, target_per_class=None):
     """Resample to balance class distribution via oversampling minority + undersampling majority."""
+    if target_per_class is None:
+        target_per_class = CLASS_BALANCE_TARGET
     from collections import Counter
     class_counts = Counter(r['class'] for r in records)
     log.info(f"Pre-resample distribution: {dict(class_counts)}")

@@ -1,0 +1,627 @@
+{
+  "overlap_sweep": [
+    {
+      "overlap": 0.0,
+      "accuracy_mean": 1.0,
+      "accuracy_std": 0.0,
+      "f1_mean": 1.0,
+      "f1_std": 0.0
+    },
+    {
+      "overlap": 0.2,
+      "accuracy_mean": 1.0,
+      "accuracy_std": 0.0,
+      "f1_mean": 1.0,
+      "f1_std": 0.0
+    },
+    {
+      "overlap": 0.4,
+      "accuracy_mean": 0.9806,
+      "accuracy_std": 0.0039,
+      "f1_mean": 0.9805,
+      "f1_std": 0.004
+    },
+    {
+      "overlap": 0.6,
+      "accuracy_mean": 0.9333,
+      "accuracy_std": 0.0136,
+      "f1_mean": 0.933,
+      "f1_std": 0.0137
+    },
+    {
+      "overlap": 0.8,
+      "accuracy_mean": 0.8083,
+      "accuracy_std": 0.018,
+      "f1_mean": 0.807,
+      "f1_std": 0.0177
+    },
+    {
+      "overlap": 1.0,
+      "accuracy_mean": 0.4639,
+      "accuracy_std": 0.0502,
+      "f1_mean": 0.4446,
+      "f1_std": 0.0456
+    }
+  ],
+  "confusion_matrices": {
+    "0.0": {
+      "matrix": [
+        [
+          21,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          22,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          21,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          30,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          26
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    },
+    "0.2": {
+      "matrix": [
+        [
+          21,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          22,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          21,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          30,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          26
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    },
+    "0.4": {
+      "matrix": [
+        [
+          21,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          22,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          21,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          30,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          3,
+          23
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    },
+    "0.6": {
+      "matrix": [
+        [
+          21,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          21,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          20,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          24,
+          6
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          26
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    },
+    "0.8": {
+      "matrix": [
+        [
+          20,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          4,
+          14,
+          3,
+          1,
+          0
+        ],
+        [
+          2,
+          0,
+          18,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          22,
+          7
+        ],
+        [
+          0,
+          0,
+          3,
+          2,
+          21
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    },
+    "1.0": {
+      "matrix": [
+        [
+          18,
+          0,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          15,
+          2,
+          2,
+          2
+        ],
+        [
+          4,
+          1,
+          13,
+          0,
+          3
+        ],
+        [
+          2,
+          7,
+          4,
+          14,
+          3
+        ],
+        [
+          7,
+          6,
+          7,
+          2,
+          4
+        ]
+      ],
+      "companies": [
+        "Company_A",
+        "Company_B",
+        "Company_C",
+        "Company_D",
+        "Company_E"
+      ]
+    }
+  },
+  "baselines": [
+    {
+      "overlap": 0.0,
+      "method": "rms_threshold",
+      "accuracy": 0.2583,
+      "f1": 0.1102
+    },
+    {
+      "overlap": 0.0,
+      "method": "random_forest",
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "overlap": 0.0,
+      "method": "ocsvm_only",
+      "accuracy": 0.7667,
+      "f1": 0.6942
+    },
+    {
+      "overlap": 0.0,
+      "method": "full_ensemble",
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "overlap": 0.2,
+      "method": "rms_threshold",
+      "accuracy": 0.2667,
+      "f1": 0.1363
+    },
+    {
+      "overlap": 0.2,
+      "method": "random_forest",
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "overlap": 0.2,
+      "method": "ocsvm_only",
+      "accuracy": 0.7667,
+      "f1": 0.7408
+    },
+    {
+      "overlap": 0.2,
+      "method": "full_ensemble",
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "overlap": 0.4,
+      "method": "rms_threshold",
+      "accuracy": 0.2667,
+      "f1": 0.1269
+    },
+    {
+      "overlap": 0.4,
+      "method": "random_forest",
+      "accuracy": 0.9667,
+      "f1": 0.9664
+    },
+    {
+      "overlap": 0.4,
+      "method": "ocsvm_only",
+      "accuracy": 0.75,
+      "f1": 0.7252
+    },
+    {
+      "overlap": 0.4,
+      "method": "full_ensemble",
+      "accuracy": 0.9833,
+      "f1": 0.9833
+    },
+    {
+      "overlap": 0.6,
+      "method": "rms_threshold",
+      "accuracy": 0.2667,
+      "f1": 0.1138
+    },
+    {
+      "overlap": 0.6,
+      "method": "random_forest",
+      "accuracy": 0.9333,
+      "f1": 0.9339
+    },
+    {
+      "overlap": 0.6,
+      "method": "ocsvm_only",
+      "accuracy": 0.6417,
+      "f1": 0.6197
+    },
+    {
+      "overlap": 0.6,
+      "method": "full_ensemble",
+      "accuracy": 0.9333,
+      "f1": 0.9323
+    },
+    {
+      "overlap": 0.8,
+      "method": "rms_threshold",
+      "accuracy": 0.275,
+      "f1": 0.1403
+    },
+    {
+      "overlap": 0.8,
+      "method": "random_forest",
+      "accuracy": 0.9167,
+      "f1": 0.917
+    },
+    {
+      "overlap": 0.8,
+      "method": "ocsvm_only",
+      "accuracy": 0.4,
+      "f1": 0.3673
+    },
+    {
+      "overlap": 0.8,
+      "method": "full_ensemble",
+      "accuracy": 0.8417,
+      "f1": 0.8444
+    },
+    {
+      "overlap": 1.0,
+      "method": "rms_threshold",
+      "accuracy": 0.2583,
+      "f1": 0.1102
+    },
+    {
+      "overlap": 1.0,
+      "method": "random_forest",
+      "accuracy": 0.4417,
+      "f1": 0.4304
+    },
+    {
+      "overlap": 1.0,
+      "method": "ocsvm_only",
+      "accuracy": 0.1417,
+      "f1": 0.0352
+    },
+    {
+      "overlap": 1.0,
+      "method": "full_ensemble",
+      "accuracy": 0.4333,
+      "f1": 0.4157
+    }
+  ],
+  "ablation": {
+    "base_accuracy": 0.9778,
+    "importance": {
+      "RMS": 0.0,
+      "Peak-to-Peak": 0.0,
+      "Variance": 0.0,
+      "Skewness": 0.0994,
+      "Kurtosis": 0.0,
+      "Crest Factor": 0.0,
+      "Shape Factor": 0.0006,
+      "Zero-Crossing Rate": 0.0033,
+      "Spectral Band 1": 0.0033,
+      "Spectral Band 2": 0.0,
+      "Spectral Band 3": 0.0,
+      "Spectral Band 4": 0.0,
+      "Spectral Band 5": -0.0033,
+      "Spectral Band 6": 0.0028,
+      "Spectral Band 7": 0.0044,
+      "Spectral Band 8": 0.0239,
+      "Spectral Band 9": 0.0,
+      "Spectral Band 10": 0.0,
+      "Dominant Freq": 0.0039,
+      "Centroid": 0.0,
+      "Spread": 0.0,
+      "Flatness": 0.0,
+      "Low Energy": 0.0006,
+      "Mid Energy": 0.0022,
+      "High Energy": 0.0033,
+      "Peak Freq 1": 0.0,
+      "Peak Freq 2": 0.0,
+      "Peak Freq 3": 0.0
+    },
+    "importance_std": {
+      "RMS": 0.0,
+      "Peak-to-Peak": 0.0,
+      "Variance": 0.0,
+      "Skewness": 0.0128,
+      "Kurtosis": 0.0,
+      "Crest Factor": 0.0,
+      "Shape Factor": 0.0039,
+      "Zero-Crossing Rate": 0.0044,
+      "Spectral Band 1": 0.0027,
+      "Spectral Band 2": 0.0,
+      "Spectral Band 3": 0.0,
+      "Spectral Band 4": 0.0,
+      "Spectral Band 5": 0.0027,
+      "Spectral Band 6": 0.0028,
+      "Spectral Band 7": 0.0022,
+      "Spectral Band 8": 0.0061,
+      "Spectral Band 9": 0.0,
+      "Spectral Band 10": 0.0,
+      "Dominant Freq": 0.0056,
+      "Centroid": 0.0,
+      "Spread": 0.0,
+      "Flatness": 0.0,
+      "Low Energy": 0.0017,
+      "Mid Energy": 0.0027,
+      "High Energy": 0.0037,
+      "Peak Freq 1": 0.0043,
+      "Peak Freq 2": 0.0,
+      "Peak Freq 3": 0.0
+    },
+    "top_10": [
+      {
+        "feature": "Skewness",
+        "importance": 0.0994
+      },
+      {
+        "feature": "Spectral Band 8",
+        "importance": 0.0239
+      },
+      {
+        "feature": "Spectral Band 7",
+        "importance": 0.0044
+      },
+      {
+        "feature": "Dominant Freq",
+        "importance": 0.0039
+      },
+      {
+        "feature": "Spectral Band 1",
+        "importance": 0.0033
+      },
+      {
+        "feature": "High Energy",
+        "importance": 0.0033
+      },
+      {
+        "feature": "Zero-Crossing Rate",
+        "importance": 0.0033
+      },
+      {
+        "feature": "Spectral Band 6",
+        "importance": 0.0028
+      },
+      {
+        "feature": "Mid Energy",
+        "importance": 0.0022
+      },
+      {
+        "feature": "Shape Factor",
+        "importance": 0.0006
+      }
+    ],
+    "group_importance": {
+      "Time Domain (0-7)": 0.1033,
+      "Spectral Bands (8-17)": 0.0311,
+      "Frequency Stats (18-27)": 0.01
+    }
+  },
+  "data_scaling": [
+    {
+      "samples_per_company": 10,
+      "total_training": 70,
+      "accuracy": 1.0,
+      "f1": 1.0
+    },
+    {
+      "samples_per_company": 20,
+      "total_training": 140,
+      "accuracy": 0.9667,
+      "f1": 0.9661
+    },
+    {
+      "samples_per_company": 40,
+      "total_training": 280,
+      "accuracy": 0.9667,
+      "f1": 0.9664
+    },
+    {
+      "samples_per_company": 60,
+      "total_training": 420,
+      "accuracy": 0.9778,
+      "f1": 0.9778
+    },
+    {
+      "samples_per_company": 80,
+      "total_training": 560,
+      "accuracy": 0.9667,
+      "f1": 0.9667
+    }
+  ],
+  "transfer_learning": {
+    "zero_shot_accuracy": 0.0,
+    "fine_tuned_accuracy": 1.0,
+    "delta": 1.0,
+    "n_cwru": 160,
+    "n_jnu": 160,
+    "n_fine_tune": 16,
+    "status": "completed"
+  },
+  "meta": {
+    "elapsed_sec": 40.1,
+    "quick_mode": false,
+    "feature_dim": 28,
+    "n_companies": 5
+  }
+}

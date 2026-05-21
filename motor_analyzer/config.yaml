@@ -52,12 +52,31 @@ feature:
 # ─────────────────────────────────────────────────────────────
 companies:
   classes:
-    - "Unknown"
     - "CWRU"
     - "JNU"
+    - "MAFAULDA"
+    - "NASA_IMS"
     - "Synthetic"
   fingerprint_samples: 512
   use_synthetic: true
+
+# ─────────────────────────────────────────────────────────────
+#  Dataset Engineering (engineer_dataset.py)
+#  Controls augmentation, resampling, and per-dataset limits
+# ─────────────────────────────────────────────────────────────
+data:
+  window_size: 128
+  target_fs: 100
+  class_balance_target: 5000
+  synthetic:
+    samples_per_class: 50
+  nasa_ims:
+    max_files_per_class: 50
+  augmentation:
+    rpm_scale_range: [0.85, 1.15]
+    noise_level_range: [0.0, 0.15]
+    amplitude_scale_range: [0.7, 1.3]
+    augment_multiplier: 3
 
 # ─────────────────────────────────────────────────────────────
 #  Paths
@@ -66,6 +85,29 @@ paths:
   models_dir: "models"
   company_models_dir: "models/companies"
   cwru_data_dir: "data/raw/cwru"
+
+# ─────────────────────────────────────────────────────────────
+#  Motor Characteristics Classifier (CWRU-based ensemble)
+#  Identifies HP rating, bearing type, and fault diameter
+#  Uses VotingClassifier (RF + GB) with data augmentation
+# ─────────────────────────────────────────────────────────────
+motor:
+  enabled: true
+  n_estimators: 150
+  gb_estimators: 50
+  cv_folds: 3
+  max_train_samples: 15000
+  augment_multiplier: 2
+  rpm_scale_range: [0.85, 1.15]
+  noise_level_range: [0.0, 0.12]
+  amplitude_scale_range: [0.7, 1.3]
+
+# ─────────────────────────────────────────────────────────────
+#  RUL Prediction (regression from NASA IMS run-to-failure data)
+# ─────────────────────────────────────────────────────────────
+rul:
+  model_type: "rf"           # rf (RandomForest) or gbr (GradientBoosting)
+  enabled: true
 
 # ─────────────────────────────────────────────────────────────
 #  Training (company classifier + anomaly models)

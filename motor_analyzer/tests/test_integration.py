@@ -12,6 +12,8 @@ from ml_models import (
     AutoencoderAnomalyDetector,
 )
 from engineer_dataset import engineer_dataset, OUTPUT_DIR
+from rul_model import RULPredictor, RUL_MODEL_PATH
+from motor_classifier import MotorClassifier, build_cwru_motor_dataset
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -127,3 +129,47 @@ def test_engineered_data_no_nans():
     X = np.load(os.path.join(OUTPUT_DIR, 'X_all.npy'))
     assert not np.isnan(X).any(), "NaN values in X"
     assert not np.isinf(X).any(), "Inf values in X"
+
+
+def test_rul_model_exists():
+    """RUL predictor model file must exist."""
+    assert os.path.exists(RUL_MODEL_PATH), "RUL model file missing"
+
+
+def test_rul_model_predict():
+    """RUL predictor must return a float between 0 and 1."""
+    model = RULPredictor.load()
+    assert model.trained, "RUL model not trained"
+    feats = np.random.randn(28).tolist()
+    pred = model.predict(feats)
+    assert isinstance(pred, float), f"Expected float, got {type(pred)}"
+    assert 0.0 <= pred <= 1.0, f"RUL should be [0,1], got {pred}"
+
+
+def test_motor_classifier_exists():
+    """Motor classifier model file must exist."""
+    mc_path = os.path.join('models', 'motor_classifier.pkl')
+    assert os.path.exists(mc_path), "Motor classifier file missing"
+
+
+def test_motor_classifier_predict():
+    """Motor classifier must return expected fields."""
+    mc = MotorClassifier.load()
+    assert mc.trained, "Motor classifier not trained"
+    feats = np.random.randn(28).tolist()
+    result = mc.predict(feats)
+    assert 'hp' in result
+    assert 'bearing_location' in result
+    assert 'fault_diameter_inches' in result
+    assert 'confidence' in result
+
+
+def test_motor_classifier_explain():
+    """Motor classifier SHAP explanations must return top features."""
+    mc = MotorClassifier.load()
+    assert mc.trained
+    feats = np.random.randn(28).tolist()
+    explanations = mc.explain(feats, MotorClassifier.feature_names())
+    assert 'hp' in explanations
+    assert 'bearing' in explanations
+    assert len(explanations['hp']) <= 5

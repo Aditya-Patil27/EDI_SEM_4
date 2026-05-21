@@ -36,3 +36,14 @@ env/
 
 # ── Project scope ──
 # All project logic is in motor_analyzer/ — the root holds only config
+
+# ── Data & Model Artifacts ──
+*.pkl
+*.pth
+*.pt
+*.h5
+data/raw/
+data/engineered/
+data/processed/
+motor_analyzer/firmware/*.bin
+motor_analyzer/models/*.json
